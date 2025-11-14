@@ -55,21 +55,22 @@ export function LiveECGPage() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setPatients(data || []);
+      
+      // CRITICAL FIX: Ensure the array only contains valid patient objects
+      const validPatients = data ? data.filter(p => p && p.name) : [];
+
+      setPatients(validPatients);
       
       // OPTIONAL: If no patient is selected, try to select the first one to avoid null issues on load
-      if (!selectedPatient && data && data.length > 0) {
-          setSelectedPatient(data[0]);
+      if (!selectedPatient && validPatients.length > 0) {
+          setSelectedPatient(validPatients[0]);
       }
     } catch (error) {
       console.error('Error loading patients:', error);
     }
   };
 
-  // Removed generateSimulatedECG as it's handled by Python
-
   const startRecording = async () => {
-    // CRITICAL: Check that selectedPatient exists before proceeding
     if (!selectedPatient || !user) {
       alert('Please select a patient first');
       return;
@@ -119,6 +120,7 @@ export function LiveECGPage() {
             setTimestamps((prev) => [...prev, new Date(payload.new.timestamp).toLocaleTimeString()].slice(-100));
           }
         )
+        // 🚨 DEBUG LISTENERS 🚨
         .subscribe((status, err) => {
             if (status === 'SUBSCRIBED') {
                 console.log('[CHANNEL STATUS] Successfully subscribed to channel!');
@@ -133,6 +135,7 @@ export function LiveECGPage() {
 
       channelRef.current = channel;
 
+      // 3. Signal the External Python Backend to start streaming (API Call)
       const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,6 +146,7 @@ export function LiveECGPage() {
         throw new Error('Failed to start Python backend stream. Check the Python console.');
       }
 
+      // 4. Update UI State
       setSessionId(newSessionId);
       setIsRecording(true);
       setIsConnected(true); 
@@ -150,13 +154,15 @@ export function LiveECGPage() {
       setTimestamps([]);
       setSessionDuration(0);
 
+      // Start duration timer
       intervalRef.current = setInterval(() => {
         setSessionDuration((prev) => prev + 1);
       }, 1000);
 
     } catch (error) {
       console.error('Error starting recording or connecting to backend:', error);
-      alert('Error starting recording. Please ensure RLS is disabled or fixed, and Python is running.');
+      alert('Error starting recording. Check Python logs and ensure RLS SELECT policy is relaxed.');
+      // Ensure state is reset if connection fails
       setIsRecording(false);
       setIsConnected(false);
       setSessionId(null);
