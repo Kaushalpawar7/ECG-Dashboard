@@ -1,0 +1,13 @@
+# ECG-Dashboard/backend/requirements.txt
+
+# Supabase client for Python
+supabase
+
+# Lightweight web framework for the API endpoint
+Flask
+
+# Tool for managing background tasks/threads (for simulation stream)
+# (Though we will use Python's built-in threading for simplicity)
+
+# For loading environment variables in the backend
+python-dotenv

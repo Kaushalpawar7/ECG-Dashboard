@@ -14,8 +14,12 @@ import { Line } from 'react-chartjs-2';
 import { supabase } from '../lib/supabase';
 import { Patient } from '../types/database';
 import { useAuth } from '../contexts/AuthContext';
+import { RealtimeChannel } from '@supabase/supabase-js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+
+// --- Backend API Configuration ---
+const BACKEND_API_URL = 'http://127.0.0.1:5000'; 
 
 export function LiveECGPage() {
   const { user } = useAuth();
@@ -27,14 +31,19 @@ export function LiveECGPage() {
   const [ecgData, setEcgData] = useState<number[]>([]);
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
+
+  // Refs for timers and the new Supabase Realtime Channel
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const simulationRef = useRef<NodeJS.Timeout | null>(null);
+  const channelRef = useRef<RealtimeChannel | null>(null);
 
   useEffect(() => {
     loadPatients();
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (simulationRef.current) clearInterval(simulationRef.current);
+      if (channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+      }
     };
   }, []);
 
@@ -47,22 +56,20 @@ export function LiveECGPage() {
 
       if (error) throw error;
       setPatients(data || []);
+      
+      // OPTIONAL: If no patient is selected, try to select the first one to avoid null issues on load
+      if (!selectedPatient && data && data.length > 0) {
+          setSelectedPatient(data[0]);
+      }
     } catch (error) {
       console.error('Error loading patients:', error);
     }
   };
 
-  const generateSimulatedECG = () => {
-    const baseValue = 2400;
-    const time = Date.now() / 100;
-    const pWave = 50 * Math.sin(time * 0.5);
-    const qrsComplex = 200 * Math.sin(time * 2);
-    const tWave = 80 * Math.sin(time * 0.8);
-    const noise = (Math.random() - 0.5) * 20;
-    return Math.round(baseValue + pWave + qrsComplex + tWave + noise);
-  };
+  // Removed generateSimulatedECG as it's handled by Python
 
   const startRecording = async () => {
+    // CRITICAL: Check that selectedPatient exists before proceeding
     if (!selectedPatient || !user) {
       alert('Please select a patient first');
       return;
@@ -82,9 +89,63 @@ export function LiveECGPage() {
 
       if (error) throw error;
 
-      setSessionId(data.id);
+      const newSessionId = data.id;
+      const patientId = selectedPatient.id; 
+
+      // 2. Start Supabase Realtime Subscription (Loosening the filter)
+      const channel = supabase
+        .channel(`ecg_stream_${newSessionId}`)
+        .on(
+          'postgres_changes',
+          // Loosened filter to patient ID
+          { event: 'INSERT', schema: 'public', table: 'ecg_data', filter: `patient_id=eq.${patientId}` },
+          (payload: any) => {
+            // Client-side filtering: Ensure data belongs to the active session
+            if (payload.new.session_id !== newSessionId) {
+                return; 
+            }
+            
+            const rawValue = payload.new.ecg_value;
+            const newEcgValue = (typeof rawValue === 'number') ? rawValue : parseInt(rawValue);
+
+            if (isNaN(newEcgValue)) {
+              console.warn('Realtime Data Error: Received non-numeric value from Supabase:', rawValue);
+              return;
+            }
+
+            console.log(`[REALTIME SUCCESS] Data received. Value: ${newEcgValue}`); 
+            
+            setEcgData((prev) => [...prev, newEcgValue].slice(-100));
+            setTimestamps((prev) => [...prev, new Date(payload.new.timestamp).toLocaleTimeString()].slice(-100));
+          }
+        )
+        .subscribe((status, err) => {
+            if (status === 'SUBSCRIBED') {
+                console.log('[CHANNEL STATUS] Successfully subscribed to channel!');
+            }
+            if (status === 'CHANNEL_ERROR') {
+                console.error('[CHANNEL ERROR] Subscription failed! Check RLS policies or filters.', err);
+            }
+            if (status === 'TIMED_OUT') {
+                console.warn('[CHANNEL TIMEOUT] Subscription timed out.');
+            }
+        });
+
+      channelRef.current = channel;
+
+      const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: selectedPatient.id, session_id: newSessionId }),
+      });
+
+      if (!streamResponse.ok) {
+        throw new Error('Failed to start Python backend stream. Check the Python console.');
+      }
+
+      setSessionId(newSessionId);
       setIsRecording(true);
-      setIsConnected(true);
+      setIsConnected(true); 
       setEcgData([]);
       setTimestamps([]);
       setSessionDuration(0);
@@ -93,34 +154,12 @@ export function LiveECGPage() {
         setSessionDuration((prev) => prev + 1);
       }, 1000);
 
-      simulationRef.current = setInterval(async () => {
-        const value = generateSimulatedECG();
-        const timestamp = new Date().toISOString();
-
-        setEcgData((prev) => {
-          const newData = [...prev, value];
-          return newData.slice(-100);
-        });
-
-        setTimestamps((prev) => {
-          const newTimestamps = [...prev, new Date().toLocaleTimeString()];
-          return newTimestamps.slice(-100);
-        });
-
-        if (data.id) {
-          await supabase.from('ecg_data').insert([
-            {
-              patient_id: selectedPatient.id,
-              session_id: data.id,
-              ecg_value: value,
-              timestamp,
-            },
-          ]);
-        }
-      }, 100);
     } catch (error) {
-      console.error('Error starting recording:', error);
-      alert('Error starting recording. Please try again.');
+      console.error('Error starting recording or connecting to backend:', error);
+      alert('Error starting recording. Please ensure RLS is disabled or fixed, and Python is running.');
+      setIsRecording(false);
+      setIsConnected(false);
+      setSessionId(null);
     }
   };
 
@@ -129,8 +168,18 @@ export function LiveECGPage() {
 
     try {
       if (intervalRef.current) clearInterval(intervalRef.current);
-      if (simulationRef.current) clearInterval(simulationRef.current);
+      if (channelRef.current) {
+        await supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
+        console.log('[CHANNEL STATUS] Unsubscribed from channel.');
+      }
 
+      await fetch(`${BACKEND_API_URL}/stop-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      
       await supabase
         .from('ecg_sessions')
         .update({
@@ -144,6 +193,7 @@ export function LiveECGPage() {
       setIsConnected(false);
       setSessionId(null);
       setSessionDuration(0);
+
     } catch (error) {
       console.error('Error stopping recording:', error);
       alert('Error stopping recording. Please try again.');
@@ -167,6 +217,7 @@ export function LiveECGPage() {
         borderWidth: 2,
         tension: 0.4,
         pointRadius: 0,
+        spanGaps: true,
       },
     ],
   };
@@ -174,14 +225,14 @@ export function LiveECGPage() {
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    animation: false,
+    animation: false as const,
     scales: {
       x: {
         display: false,
       },
       y: {
-        min: 2000,
-        max: 2800,
+        min: 1300, 
+        max: 2200, 
         ticks: {
           color: '#6b7280',
         },
@@ -223,8 +274,9 @@ export function LiveECGPage() {
             </div>
 
             <div className="bg-black rounded-lg p-4" style={{ height: '400px' }}>
-              {ecgData.length > 0 ? (
-                <Line data={chartData} options={chartOptions} />
+              {isRecording ? ( 
+                // Using key={ecgData.length} to force re-render
+                <Line key={ecgData.length} data={chartData} options={chartOptions} />
               ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
@@ -296,9 +348,9 @@ export function LiveECGPage() {
                     <User className="w-5 h-5 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="font-medium text-gray-900">{patient.name}</p>
+                    <p className="font-medium text-gray-900">{patient?.name}</p> 
                     <p className="text-xs text-gray-500">
-                      {patient.age}y, {patient.gender}
+                      {patient?.age}y, {patient?.gender}
                     </p>
                   </div>
                 </button>
