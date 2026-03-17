@@ -85,7 +85,7 @@ export function LiveECGPage() {
     }
 
     try {
-      // 1. Create Supabase session
+      // 1. Create Supabase session (Metadata only)
       const { data, error } = await supabase
         .from('ecg_sessions')
         .insert([{ patient_id: selectedPatient.id, status: 'active' }])
@@ -116,22 +116,7 @@ export function LiveECGPage() {
         console.warn("Firebase not configured properly. Check src/lib/firebase.ts");
       }
 
-      // 3. Start Archiving via Python Backend (Optional for visualization phase)
-      try {
-        const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ patient_id: selectedPatient.id, session_id: newSessionId }),
-        });
-
-        if (!streamResponse.ok) {
-          console.warn('Backend stream failed to start, but continuing with live visualization.');
-        }
-      } catch (backendError) {
-        console.warn('Backend server not reachable. Archiving disabled, but live view will continue.', backendError);
-      }
-
-      // 4. Update UI State
+      // 3. Update UI State (No Backend needed anymore)
       setSessionId(newSessionId);
       setIsRecording(true);
       setEcgData([]);
@@ -143,8 +128,8 @@ export function LiveECGPage() {
       }, 1000);
 
     } catch (error) {
-      console.error('Error starting recording:', error);
-      alert('Error starting recording. Please check console.');
+      console.error('Error starting session:', error);
+      alert('Error starting session. Check Supabase connection.');
       setIsRecording(false);
       setIsConnected(false);
     }
@@ -156,12 +141,7 @@ export function LiveECGPage() {
     try {
       cleanupConnections();
 
-      await fetch(`${BACKEND_API_URL}/stop-stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId }),
-      });
-
+      // Update Supabase session status
       await supabase
         .from('ecg_sessions')
         .update({
