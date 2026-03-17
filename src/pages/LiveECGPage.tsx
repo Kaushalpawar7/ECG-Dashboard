@@ -116,15 +116,19 @@ export function LiveECGPage() {
         console.warn("Firebase not configured properly. Check src/lib/firebase.ts");
       }
 
-      // 3. Start Archiving via Python Backend
-      const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ patient_id: selectedPatient.id, session_id: newSessionId }),
-      });
+      // 3. Start Archiving via Python Backend (Optional for visualization phase)
+      try {
+        const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ patient_id: selectedPatient.id, session_id: newSessionId }),
+        });
 
-      if (!streamResponse.ok) {
-        console.warn('Backend stream failed to start, but continuing with live visualization.');
+        if (!streamResponse.ok) {
+          console.warn('Backend stream failed to start, but continuing with live visualization.');
+        }
+      } catch (backendError) {
+        console.warn('Backend server not reachable. Archiving disabled, but live view will continue.', backendError);
       }
 
       // 4. Update UI State
