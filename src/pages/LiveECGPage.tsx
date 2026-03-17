@@ -58,16 +58,12 @@ export function LiveECGPage() {
   useEffect(() => {
     if (!database) return;
 
-    // Listen to the data path where ESP32 pushes
-    const statusQuery = query(ref(database, '/'), limitToLast(1));
-    const unsubscribe = onValue(statusQuery, (snapshot) => {
+    // Listen to the fixed live value node for connectivity
+    const sentinelRef = ref(database, '/live/ecg_value');
+    const unsubscribe = onValue(sentinelRef, (snapshot) => {
       if (snapshot.exists()) {
-        const data = snapshot.val();
-        // snapshot.val() will be an object where keys are push IDs
-        if (data && typeof data === 'object') {
-          lastUpdateRef.current = Date.now();
-          setIsConnected(true);
-        }
+        lastUpdateRef.current = Date.now();
+        setIsConnected(true);
       }
     });
 
