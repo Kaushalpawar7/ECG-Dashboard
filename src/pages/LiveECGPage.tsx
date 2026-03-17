@@ -58,19 +58,24 @@ export function LiveECGPage() {
   useEffect(() => {
     if (!database) return;
 
+    // Listen to the data path where ESP32 pushes
     const statusQuery = query(ref(database, '/'), limitToLast(1));
     const unsubscribe = onValue(statusQuery, (snapshot) => {
       if (snapshot.exists()) {
-        lastUpdateRef.current = Date.now();
-        setIsConnected(true);
+        const data = snapshot.val();
+        // snapshot.val() will be an object where keys are push IDs
+        if (data && typeof data === 'object') {
+          lastUpdateRef.current = Date.now();
+          setIsConnected(true);
+        }
       }
     });
 
     const watchdog = setInterval(() => {
-      if (Date.now() - lastUpdateRef.current > 3000) {
+      if (Date.now() - lastUpdateRef.current > 5000) { // 5s timeout
         setIsConnected(false);
       }
-    }, 1000);
+    }, 2000);
 
     return () => {
       unsubscribe();
@@ -122,15 +127,18 @@ export function LiveECGPage() {
         firebaseListenerRef.current = onValue(ecgQuery, (snapshot) => {
           const vals = snapshot.val();
           if (vals) {
-            const latestKey = Object.keys(vals)[0];
+            // Firebase push IDs generate an object { "-Nxyz...": value }
+            const keys = Object.keys(vals);
+            const latestKey = keys[keys.length - 1];
             const newValue = Number(vals[latestKey]);
+            
             if (!isNaN(newValue)) {
               setEcgData((prev) => [...prev, newValue].slice(-300));
               setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
             }
           }
         });
-      } else {
+      } else if (viewMode === 'reference') {
         const pattern = REFERENCE_PATTERNS[referenceType as keyof typeof REFERENCE_PATTERNS] || REFERENCE_PATTERNS.normal;
         let idx = 0;
         intervalRef.current = setInterval(() => {

@@ -23,11 +23,17 @@ if (isConfigured) {
     try {
         app = initializeApp(firebaseConfig);
         database = getDatabase(app);
+        console.log("Firebase initialized successfully with:", firebaseConfig.databaseURL);
     } catch (error) {
         console.error("Firebase initialization error:", error);
     }
 } else {
-    console.warn("Firebase is not configured. Live ECG visualization will be disabled until src/lib/firebase.ts is updated.");
+    console.warn("Firebase is not configured! Missing VITE_FIREBASE_API_KEY or VITE_FIREBASE_DATABASE_URL in .env");
+    console.log("Current Config:", {
+        hasApiKey: !!firebaseConfig.apiKey,
+        hasDbUrl: !!firebaseConfig.databaseURL,
+        projectId: firebaseConfig.projectId
+    });
 }
 
 export { database };
