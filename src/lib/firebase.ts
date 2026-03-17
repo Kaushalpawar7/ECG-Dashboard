@@ -12,5 +12,20 @@ const firebaseConfig = {
     appId: "YOUR_APP_ID"
 };
 
-const app = initializeApp(firebaseConfig);
-export const database = getDatabase(app);
+const isConfigured = firebaseConfig.apiKey !== "YOUR_API_KEY" && firebaseConfig.databaseURL !== "YOUR_DATABASE_URL";
+
+let app;
+let database: any = null;
+
+if (isConfigured) {
+    try {
+        app = initializeApp(firebaseConfig);
+        database = getDatabase(app);
+    } catch (error) {
+        console.error("Firebase initialization error:", error);
+    }
+} else {
+    console.warn("Firebase is not configured. Live ECG visualization will be disabled until src/lib/firebase.ts is updated.");
+}
+
+export { database };
