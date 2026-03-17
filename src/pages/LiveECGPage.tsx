@@ -15,11 +15,13 @@ import { supabase } from '../lib/supabase';
 import { Patient } from '../types/database';
 import { useAuth } from '../contexts/AuthContext';
 import { RealtimeChannel } from '@supabase/supabase-js';
+import { database } from '../lib/firebase';
+import { ref, onValue, limitToLast, query } from 'firebase/database';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
 // --- Backend API Configuration ---
-const BACKEND_API_URL = 'http://127.0.0.1:5000'; 
+const BACKEND_API_URL = 'http://127.0.0.1:5000';
 
 export function LiveECGPage() {
   const { user } = useAuth();
@@ -32,20 +34,30 @@ export function LiveECGPage() {
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
 
-  // Refs for timers and the new Supabase Realtime Channel
+  // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const firebaseListenerRef = useRef<any>(null);
 
   useEffect(() => {
     loadPatients();
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-      }
+      cleanupConnections();
     };
   }, []);
+
+  const cleanupConnections = () => {
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    if (channelRef.current) {
+      supabase.removeChannel(channelRef.current);
+      channelRef.current = null;
+    }
+    if (firebaseListenerRef.current) {
+      // Firebase listener cleanup (off() is implicitly handled by the return if using onValue properly or explicitly)
+      firebaseListenerRef.current(); // Unsubscribe function returned by onValue
+      firebaseListenerRef.current = null;
+    }
+  };
 
   const loadPatients = async () => {
     try {
@@ -55,15 +67,11 @@ export function LiveECGPage() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      
-      // CRITICAL FIX: Ensure the array only contains valid patient objects
       const validPatients = data ? data.filter(p => p && p.name) : [];
-
       setPatients(validPatients);
-      
-      // OPTIONAL: If no patient is selected, try to select the first one to avoid null issues on load
+
       if (!selectedPatient && validPatients.length > 0) {
-          setSelectedPatient(validPatients[0]);
+        setSelectedPatient(validPatients[0]);
       }
     } catch (error) {
       console.error('Error loading patients:', error);
@@ -77,65 +85,34 @@ export function LiveECGPage() {
     }
 
     try {
+      // 1. Create Supabase session
       const { data, error } = await supabase
         .from('ecg_sessions')
-        .insert([
-          {
-            patient_id: selectedPatient.id,
-            status: 'active',
-          },
-        ])
-        .select()
-        .single();
+        .insert([{ patient_id: selectedPatient.id, status: 'active' }])
+        .select().single();
 
       if (error) throw error;
-
       const newSessionId = data.id;
-      const patientId = selectedPatient.id; 
 
-      // 2. Start Supabase Realtime Subscription (Loosening the filter)
-      const channel = supabase
-        .channel(`ecg_stream_${newSessionId}`)
-        .on(
-          'postgres_changes',
-          // Loosened filter to patient ID
-          { event: 'INSERT', schema: 'public', table: 'ecg_data', filter: `patient_id=eq.${patientId}` },
-          (payload: any) => {
-            // Client-side filtering: Ensure data belongs to the active session
-            if (payload.new.session_id !== newSessionId) {
-                return; 
-            }
-            
-            const rawValue = payload.new.ecg_value;
-            const newEcgValue = (typeof rawValue === 'number') ? rawValue : parseInt(rawValue);
+      // 2. Direct Firebase Listener (Professional Path)
+      // Listen to the root where the ESP32 pushes data
+      const ecgQuery = query(ref(database, '/'), limitToLast(1));
 
-            if (isNaN(newEcgValue)) {
-              console.warn('Realtime Data Error: Received non-numeric value from Supabase:', rawValue);
-              return;
-            }
+      firebaseListenerRef.current = onValue(ecgQuery, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          const latestKey = Object.keys(data)[0];
+          const newValue = Number(data[latestKey]);
 
-            console.log(`[REALTIME SUCCESS] Data received. Value: ${newEcgValue}`); 
-            
-            setEcgData((prev) => [...prev, newEcgValue].slice(-100));
-            setTimestamps((prev) => [...prev, new Date(payload.new.timestamp).toLocaleTimeString()].slice(-100));
+          if (!isNaN(newValue)) {
+            setEcgData((prev) => [...prev, newValue].slice(-300));
+            setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
+            setIsConnected(true);
           }
-        )
-        // 🚨 DEBUG LISTENERS 🚨
-        .subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-                console.log('[CHANNEL STATUS] Successfully subscribed to channel!');
-            }
-            if (status === 'CHANNEL_ERROR') {
-                console.error('[CHANNEL ERROR] Subscription failed! Check RLS policies or filters.', err);
-            }
-            if (status === 'TIMED_OUT') {
-                console.warn('[CHANNEL TIMEOUT] Subscription timed out.');
-            }
-        });
+        }
+      });
 
-      channelRef.current = channel;
-
-      // 3. Signal the External Python Backend to start streaming (API Call)
+      // 3. Start Archiving via Python Backend
       const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -143,29 +120,25 @@ export function LiveECGPage() {
       });
 
       if (!streamResponse.ok) {
-        throw new Error('Failed to start Python backend stream. Check the Python console.');
+        console.warn('Backend stream failed to start, but continuing with live visualization.');
       }
 
       // 4. Update UI State
       setSessionId(newSessionId);
       setIsRecording(true);
-      setIsConnected(true); 
       setEcgData([]);
       setTimestamps([]);
       setSessionDuration(0);
 
-      // Start duration timer
       intervalRef.current = setInterval(() => {
         setSessionDuration((prev) => prev + 1);
       }, 1000);
 
     } catch (error) {
-      console.error('Error starting recording or connecting to backend:', error);
-      alert('Error starting recording. Check Python logs and ensure RLS SELECT policy is relaxed.');
-      // Ensure state is reset if connection fails
+      console.error('Error starting recording:', error);
+      alert('Error starting recording. Please check console.');
       setIsRecording(false);
       setIsConnected(false);
-      setSessionId(null);
     }
   };
 
@@ -173,19 +146,14 @@ export function LiveECGPage() {
     if (!sessionId) return;
 
     try {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      if (channelRef.current) {
-        await supabase.removeChannel(channelRef.current);
-        channelRef.current = null;
-        console.log('[CHANNEL STATUS] Unsubscribed from channel.');
-      }
+      cleanupConnections();
 
       await fetch(`${BACKEND_API_URL}/stop-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId }),
       });
-      
+
       await supabase
         .from('ecg_sessions')
         .update({
@@ -202,7 +170,6 @@ export function LiveECGPage() {
 
     } catch (error) {
       console.error('Error stopping recording:', error);
-      alert('Error stopping recording. Please try again.');
     }
   };
 
@@ -218,10 +185,10 @@ export function LiveECGPage() {
       {
         label: 'ECG Signal',
         data: ecgData,
-        borderColor: 'rgb(34, 197, 94)',
-        backgroundColor: 'rgba(34, 197, 94, 0.1)',
-        borderWidth: 2,
-        tension: 0.4,
+        borderColor: 'rgb(37, 99, 235)', // Professional Blue
+        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+        borderWidth: 1.5,
+        tension: 0, // Sharp spikes
         pointRadius: 0,
         spanGaps: true,
       },
@@ -233,27 +200,20 @@ export function LiveECGPage() {
     maintainAspectRatio: false,
     animation: false as const,
     scales: {
-      x: {
-        display: false,
-      },
+      x: { display: false },
       y: {
-        min: 1300, 
-        max: 2200, 
+        beginAtZero: false,
+        grace: '5%',
         ticks: {
           color: '#6b7280',
+          font: { size: 10 },
         },
-        grid: {
-          color: '#e5e7eb',
-        },
+        grid: { color: '#f3f4f6' },
       },
     },
     plugins: {
-      legend: {
-        display: false,
-      },
-      tooltip: {
-        enabled: false,
-      },
+      legend: { display: false },
+      tooltip: { enabled: false },
     },
   };
 
@@ -280,8 +240,7 @@ export function LiveECGPage() {
             </div>
 
             <div className="bg-black rounded-lg p-4" style={{ height: '400px' }}>
-              {isRecording ? ( 
-                // Using key={ecgData.length} to force re-render
+              {isRecording ? (
                 <Line key={ecgData.length} data={chartData} options={chartOptions} />
               ) : (
                 <div className="h-full flex items-center justify-center">
@@ -344,29 +303,22 @@ export function LiveECGPage() {
                   key={patient.id}
                   onClick={() => !isRecording && setSelectedPatient(patient)}
                   disabled={isRecording}
-                  className={`w-full flex items-center space-x-3 p-3 rounded-lg transition ${
-                    selectedPatient?.id === patient.id
-                      ? 'bg-blue-50 border-2 border-blue-500'
-                      : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
-                  } ${isRecording ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  className={`w-full flex items-center space-x-3 p-3 rounded-lg transition ${selectedPatient?.id === patient.id
+                    ? 'bg-blue-50 border-2 border-blue-500'
+                    : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                    } ${isRecording ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-full flex items-center justify-center flex-shrink-0">
                     <User className="w-5 h-5 text-white" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="font-medium text-gray-900">{patient?.name}</p> 
+                    <p className="font-medium text-gray-900">{patient?.name}</p>
                     <p className="text-xs text-gray-500">
                       {patient?.age}y, {patient?.gender}
                     </p>
                   </div>
                 </button>
               ))}
-
-              {patients.length === 0 && (
-                <p className="text-center text-gray-500 text-sm py-8">
-                  No patients available. Add a patient first.
-                </p>
-              )}
             </div>
           </div>
 
@@ -386,31 +338,6 @@ export function LiveECGPage() {
                   <span className="text-sm text-gray-600">Gender:</span>
                   <span className="text-sm font-medium text-gray-900">{selectedPatient.gender}</span>
                 </div>
-                {selectedPatient.weight && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Weight:</span>
-                    <span className="text-sm font-medium text-gray-900">
-                      {selectedPatient.weight} kg
-                    </span>
-                  </div>
-                )}
-                {selectedPatient.height && (
-                  <div className="flex justify-between">
-                    <span className="text-sm text-gray-600">Height:</span>
-                    <span className="text-sm font-medium text-gray-900">
-                      {selectedPatient.height} cm
-                    </span>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {isRecording && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4">
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                <p className="text-sm font-medium text-green-700">Recording in progress</p>
               </div>
             </div>
           )}
