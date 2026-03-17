@@ -14,14 +14,10 @@ import { Line } from 'react-chartjs-2';
 import { supabase } from '../lib/supabase';
 import { Patient } from '../types/database';
 import { useAuth } from '../contexts/AuthContext';
-import { RealtimeChannel } from '@supabase/supabase-js';
 import { database } from '../lib/firebase';
 import { ref, onValue, limitToLast, query } from 'firebase/database';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
-
-// --- Backend API Configuration ---
-const BACKEND_API_URL = 'http://127.0.0.1:5000';
 
 export function LiveECGPage() {
   const { user } = useAuth();
@@ -33,31 +29,54 @@ export function LiveECGPage() {
   const [ecgData, setEcgData] = useState<number[]>([]);
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
+  const [viewMode, setViewMode] = useState<'live' | 'reference'>('live');
+  const [referenceType, setReferenceType] = useState('normal');
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
-  const channelRef = useRef<RealtimeChannel | null>(null);
+  const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const firebaseListenerRef = useRef<any>(null);
+  const lastUpdateRef = useRef<number>(0);
+
+  // Reference Pattern Mock Data
+  const REFERENCE_PATTERNS = {
+    normal: [2000, 2010, 2050, 2020, 1980, 2100, 4000, 1500, 2000, 2050, 2100, 2080],
+    tachycardia: [2000, 2100, 4000, 1500, 2000, 2100, 4000, 1500],
+    bradycardia: [2000, 2000, 2000, 2100, 4000, 1500, 2000, 2000],
+  };
 
   useEffect(() => {
     loadPatients();
     return () => {
-      cleanupConnections();
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
+      if (firebaseListenerRef.current) firebaseListenerRef.current();
     };
   }, []);
 
-  const cleanupConnections = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-    if (firebaseListenerRef.current) {
-      // Firebase listener cleanup (off() is implicitly handled by the return if using onValue properly or explicitly)
-      firebaseListenerRef.current(); // Unsubscribe function returned by onValue
-      firebaseListenerRef.current = null;
-    }
-  };
+  // 1. ESP32 Connection Sentinel (Heartbeat Monitor)
+  useEffect(() => {
+    if (!database) return;
+
+    const statusQuery = query(ref(database, '/'), limitToLast(1));
+    const unsubscribe = onValue(statusQuery, (snapshot) => {
+      if (snapshot.exists()) {
+        lastUpdateRef.current = Date.now();
+        setIsConnected(true);
+      }
+    });
+
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastUpdateRef.current > 3000) {
+        setIsConnected(false);
+      }
+    }, 1000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(watchdog);
+    };
+  }, []);
 
   const loadPatients = async () => {
     try {
@@ -67,7 +86,7 @@ export function LiveECGPage() {
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      const validPatients = data ? data.filter(p => p && p.name) : [];
+      const validPatients = data || [];
       setPatients(validPatients);
 
       if (!selectedPatient && validPatients.length > 0) {
@@ -84,8 +103,12 @@ export function LiveECGPage() {
       return;
     }
 
+    if (!isConnected && viewMode === 'live') {
+      alert('Cannot start recording: ESP32 is Disconnected. Please check hardware.');
+      return;
+    }
+
     try {
-      // 1. Create Supabase session (Metadata only)
       const { data, error } = await supabase
         .from('ecg_sessions')
         .insert([{ patient_id: selectedPatient.id, status: 'active' }])
@@ -94,36 +117,37 @@ export function LiveECGPage() {
       if (error) throw error;
       const newSessionId = data.id;
 
-      // 2. Direct Firebase Listener (Professional Path)
-      if (database) {
-        // Listen to the root where the ESP32 pushes data
+      if (viewMode === 'live' && database) {
         const ecgQuery = query(ref(database, '/'), limitToLast(1));
-
         firebaseListenerRef.current = onValue(ecgQuery, (snapshot) => {
-          const data = snapshot.val();
-          if (data) {
-            const latestKey = Object.keys(data)[0];
-            const newValue = Number(data[latestKey]);
-
+          const vals = snapshot.val();
+          if (vals) {
+            const latestKey = Object.keys(vals)[0];
+            const newValue = Number(vals[latestKey]);
             if (!isNaN(newValue)) {
               setEcgData((prev) => [...prev, newValue].slice(-300));
               setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
-              setIsConnected(true);
             }
           }
         });
       } else {
-        console.warn("Firebase not configured properly. Check src/lib/firebase.ts");
+        const pattern = REFERENCE_PATTERNS[referenceType as keyof typeof REFERENCE_PATTERNS] || REFERENCE_PATTERNS.normal;
+        let idx = 0;
+        intervalRef.current = setInterval(() => {
+          const val = pattern[idx % pattern.length];
+          setEcgData((prev) => [...prev, val].slice(-300));
+          setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
+          idx++;
+        }, 100);
       }
 
-      // 3. Update UI State (No Backend needed anymore)
       setSessionId(newSessionId);
       setIsRecording(true);
       setEcgData([]);
       setTimestamps([]);
       setSessionDuration(0);
 
-      intervalRef.current = setInterval(() => {
+      durationIntervalRef.current = setInterval(() => {
         setSessionDuration((prev) => prev + 1);
       }, 1000);
 
@@ -131,17 +155,25 @@ export function LiveECGPage() {
       console.error('Error starting session:', error);
       alert('Error starting session. Check Supabase connection.');
       setIsRecording(false);
-      setIsConnected(false);
     }
   };
 
   const stopRecording = async () => {
     if (!sessionId) return;
-
     try {
-      cleanupConnections();
+      if (firebaseListenerRef.current) {
+        firebaseListenerRef.current();
+        firebaseListenerRef.current = null;
+      }
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current);
+        intervalRef.current = null;
+      }
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+        durationIntervalRef.current = null;
+      }
 
-      // Update Supabase session status
       await supabase
         .from('ecg_sessions')
         .update({
@@ -152,10 +184,8 @@ export function LiveECGPage() {
         .eq('id', sessionId);
 
       setIsRecording(false);
-      setIsConnected(false);
       setSessionId(null);
       setSessionDuration(0);
-
     } catch (error) {
       console.error('Error stopping recording:', error);
     }
@@ -173,11 +203,18 @@ export function LiveECGPage() {
       {
         label: 'ECG Signal',
         data: ecgData,
-        borderColor: 'rgb(37, 99, 235)', // Professional Blue
+        borderColor: 'rgb(37, 99, 235)',
         backgroundColor: 'rgba(37, 99, 235, 0.1)',
         borderWidth: 1.5,
-        tension: 0, // Sharp spikes
-        pointRadius: 0,
+        tension: 0,
+        pointRadius: (context: any) => {
+          const val = context.dataset.data[context.dataIndex];
+          return val > 3500 ? 5 : 0;
+        },
+        pointBackgroundColor: (context: any) => {
+          const val = context.dataset.data[context.dataIndex];
+          return val > 3500 ? 'rgb(239, 44, 44)' : 'transparent';
+        },
         spanGaps: true,
       },
     ],
@@ -211,17 +248,51 @@ export function LiveECGPage() {
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900">Real-Time ECG Monitor</h3>
+              <div className="space-y-1">
+                <h3 className="text-lg font-bold text-gray-900">Real-Time ECG Monitor</h3>
+                <div className="flex items-center space-x-4">
+                  <div className="flex p-0.5 bg-gray-100 rounded-lg">
+                    <button
+                      onClick={() => !isRecording && setViewMode('live')}
+                      disabled={isRecording}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode === 'live' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      Live Stream
+                    </button>
+                    <button
+                      onClick={() => !isRecording && setViewMode('reference')}
+                      disabled={isRecording}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition ${viewMode === 'reference' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}
+                    >
+                      Patterns
+                    </button>
+                  </div>
+
+                  {viewMode === 'reference' && (
+                    <select
+                      value={referenceType}
+                      onChange={(e) => setReferenceType(e.target.value)}
+                      disabled={isRecording}
+                      className="text-xs border rounded-lg px-2 py-1 bg-white border-gray-200 outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="normal">Normal Sinus</option>
+                      <option value="tachycardia">Tachycardia</option>
+                      <option value="bradycardia">Bradycardia</option>
+                    </select>
+                  )}
+                </div>
+              </div>
+
               <div className="flex items-center space-x-2">
                 {isConnected ? (
                   <>
                     <Wifi className="w-5 h-5 text-green-500" />
-                    <span className="text-sm font-medium text-green-600">Connected</span>
+                    <span className="text-sm font-medium text-green-600">Hardware Online</span>
                   </>
                 ) : (
                   <>
                     <WifiOff className="w-5 h-5 text-gray-400" />
-                    <span className="text-sm font-medium text-gray-500">Disconnected</span>
+                    <span className="text-sm font-medium text-gray-500">Hardware Offline</span>
                   </>
                 )}
               </div>
@@ -229,7 +300,7 @@ export function LiveECGPage() {
 
             <div className="bg-black rounded-lg p-4" style={{ height: '400px' }}>
               {isRecording ? (
-                <Line key={ecgData.length} data={chartData} options={chartOptions} />
+                <Line key={`${ecgData.length}-${viewMode}`} data={chartData} options={chartOptions} />
               ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
