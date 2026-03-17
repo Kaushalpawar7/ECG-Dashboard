@@ -95,22 +95,26 @@ export function LiveECGPage() {
       const newSessionId = data.id;
 
       // 2. Direct Firebase Listener (Professional Path)
-      // Listen to the root where the ESP32 pushes data
-      const ecgQuery = query(ref(database, '/'), limitToLast(1));
+      if (database) {
+        // Listen to the root where the ESP32 pushes data
+        const ecgQuery = query(ref(database, '/'), limitToLast(1));
 
-      firebaseListenerRef.current = onValue(ecgQuery, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-          const latestKey = Object.keys(data)[0];
-          const newValue = Number(data[latestKey]);
+        firebaseListenerRef.current = onValue(ecgQuery, (snapshot) => {
+          const data = snapshot.val();
+          if (data) {
+            const latestKey = Object.keys(data)[0];
+            const newValue = Number(data[latestKey]);
 
-          if (!isNaN(newValue)) {
-            setEcgData((prev) => [...prev, newValue].slice(-300));
-            setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
-            setIsConnected(true);
+            if (!isNaN(newValue)) {
+              setEcgData((prev) => [...prev, newValue].slice(-300));
+              setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
+              setIsConnected(true);
+            }
           }
-        }
-      });
+        });
+      } else {
+        console.warn("Firebase not configured properly. Check src/lib/firebase.ts");
+      }
 
       // 3. Start Archiving via Python Backend
       const streamResponse = await fetch(`${BACKEND_API_URL}/start-stream`, {
