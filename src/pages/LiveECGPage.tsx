@@ -131,7 +131,7 @@ export function LiveECGPage() {
             const keys = Object.keys(vals);
             const latestKey = keys[keys.length - 1];
             const newValue = Number(vals[latestKey]);
-            
+
             if (!isNaN(newValue)) {
               setEcgData((prev) => [...prev, newValue].slice(-300));
               setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
