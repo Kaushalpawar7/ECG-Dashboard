@@ -32,6 +32,7 @@ export function LiveECGPage() {
   const [ecgData, setEcgData] = useState<number[]>([]);
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
+  const [modelDownloadProgress, setModelDownloadProgress] = useState<number>(0);
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -72,7 +73,9 @@ export function LiveECGPage() {
 
   useEffect(() => {
     loadPatients();
-    inferenceService.loadModelFromWeights('/model/weights.json');
+    inferenceService.loadModelFromWeights(undefined, (progress) => {
+      setModelDownloadProgress(progress);
+    });
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
@@ -141,6 +144,11 @@ export function LiveECGPage() {
   };
 
   const startRecording = async () => {
+    if (modelDownloadProgress < 100) {
+      alert('Please wait for the AI Model to fully download before recording.');
+      return;
+    }
+
     if (!selectedPatient || !user) {
       alert('Please select a patient first');
       return;
@@ -255,6 +263,18 @@ export function LiveECGPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
+            {modelDownloadProgress < 100 && (
+              <div className="mb-4 bg-blue-50 border border-blue-100 rounded-lg p-4 animate-in fade-in duration-500">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-sm font-semibold text-blue-800">Downloading AI Model Data (136MB)</span>
+                  <span className="text-sm font-bold text-blue-600">{modelDownloadProgress}%</span>
+                </div>
+                <div className="w-full bg-blue-200 rounded-full h-2.5">
+                  <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${modelDownloadProgress}%` }}></div>
+                </div>
+                <p className="text-xs text-blue-600 mt-2">Caching to browser storage for instant future loading...</p>
+              </div>
+            )}
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Live ECG Monitoring</h3>

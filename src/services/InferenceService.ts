@@ -7,8 +7,8 @@ export interface PredictionResult {
 
 const CLASSES = ['NORMAL', 'MI', 'STTC', 'CD', 'HYP'];
 
-// Set your Supabase Public URL here once uploaded!
-const REMOTE_WEIGHTS_URL = '/model/weights.json'; 
+// GitHub Releases API directly for the 136MB weights
+const REMOTE_WEIGHTS_URL = 'https://github.com/Kaushalpawar7/ECG-Dashboard/releases/download/CNN/weights.json'; 
 
 export class InferenceService {
   private model: tf.Sequential | null = null;
@@ -51,12 +51,60 @@ export class InferenceService {
     };
   }
 
-  async loadModelFromWeights(weightsUrl: string = REMOTE_WEIGHTS_URL) {
+  async loadModelFromWeights(
+    weightsUrl: string = REMOTE_WEIGHTS_URL,
+    onProgress?: (progress: number) => void
+  ) {
     try {
-      console.log(`Fetching weights from: ${weightsUrl}`);
-      const response = await fetch(weightsUrl);
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const weights = await response.json();
+      console.log(`Checking cache for weights from: ${weightsUrl}`);
+      const cache = await caches.open('ecg-model-cache');
+      let cachedResponse = await cache.match(weightsUrl);
+      let weights;
+
+      if (cachedResponse) {
+        console.log('Model weights found in browser cache!');
+        if (onProgress) onProgress(100);
+        weights = await cachedResponse.json();
+      } else {
+        console.log('Model not in cache. Fetching from network...');
+        const response = await fetch(weightsUrl);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const contentLength = response.headers.get('content-length');
+        const total = contentLength ? parseInt(contentLength, 10) : 137 * 1024 * 1024; // fallback ~137MB
+        
+        let loaded = 0;
+        const reader = response.body?.getReader();
+        const chunks: Uint8Array[] = [];
+        
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+              loaded += value.length;
+              chunks.push(value);
+              if (onProgress) {
+                // Ensure max 100% just in case headers are inaccurate
+                onProgress(Math.min(100, Math.round((loaded / total) * 100)));
+              }
+            }
+          }
+        }
+        
+        const blob = new Blob(chunks as BlobPart[]);
+        const text = await blob.text();
+        weights = JSON.parse(text);
+        
+        console.log('Download complete. Caching model weights...');
+        const cacheResponse = new Response(blob, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': blob.size.toString()
+          }
+        });
+        await cache.put(weightsUrl, cacheResponse);
+      }
 
       // Define Model Architecture (Matching ResNet1D in PyTorch)
       const input = tf.input({ shape: [1000, 1] });
