@@ -1,0 +1,500 @@
+{
+  "initial_conv.0.weight": {
+    "shape": [
+      32,
+      1,
+      5
+    ],
+    "size": 160,
+    "offset": 0
+  },
+  "initial_conv.1.weight": {
+    "shape": [
+      32
+    ],
+    "size": 32,
+    "offset": 160
+  },
+  "initial_conv.1.bias": {
+    "shape": [
+      32
+    ],
+    "size": 32,
+    "offset": 192
+  },
+  "layer1.0.conv1.weight": {
+    "shape": [
+      64,
+      32,
+      5
+    ],
+    "size": 10240,
+    "offset": 224
+  },
+  "layer1.0.bn1.weight": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 10464
+  },
+  "layer1.0.bn1.bias": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 10528
+  },
+  "layer1.0.conv2.weight": {
+    "shape": [
+      64,
+      64,
+      5
+    ],
+    "size": 20480,
+    "offset": 10592
+  },
+  "layer1.0.bn2.weight": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 31072
+  },
+  "layer1.0.bn2.bias": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 31136
+  },
+  "layer1.0.shortcut.0.weight": {
+    "shape": [
+      64,
+      32,
+      1
+    ],
+    "size": 2048,
+    "offset": 31200
+  },
+  "layer1.0.shortcut.1.weight": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 33248
+  },
+  "layer1.0.shortcut.1.bias": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 33312
+  },
+  "layer1.1.conv1.weight": {
+    "shape": [
+      64,
+      64,
+      5
+    ],
+    "size": 20480,
+    "offset": 33376
+  },
+  "layer1.1.bn1.weight": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 53856
+  },
+  "layer1.1.bn1.bias": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 53920
+  },
+  "layer1.1.conv2.weight": {
+    "shape": [
+      64,
+      64,
+      5
+    ],
+    "size": 20480,
+    "offset": 53984
+  },
+  "layer1.1.bn2.weight": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 74464
+  },
+  "layer1.1.bn2.bias": {
+    "shape": [
+      64
+    ],
+    "size": 64,
+    "offset": 74528
+  },
+  "layer2.0.conv1.weight": {
+    "shape": [
+      128,
+      64,
+      5
+    ],
+    "size": 40960,
+    "offset": 74592
+  },
+  "layer2.0.bn1.weight": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 115552
+  },
+  "layer2.0.bn1.bias": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 115680
+  },
+  "layer2.0.conv2.weight": {
+    "shape": [
+      128,
+      128,
+      5
+    ],
+    "size": 81920,
+    "offset": 115808
+  },
+  "layer2.0.bn2.weight": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 197728
+  },
+  "layer2.0.bn2.bias": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 197856
+  },
+  "layer2.0.shortcut.0.weight": {
+    "shape": [
+      128,
+      64,
+      1
+    ],
+    "size": 8192,
+    "offset": 197984
+  },
+  "layer2.0.shortcut.1.weight": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 206176
+  },
+  "layer2.0.shortcut.1.bias": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 206304
+  },
+  "layer2.1.conv1.weight": {
+    "shape": [
+      128,
+      128,
+      5
+    ],
+    "size": 81920,
+    "offset": 206432
+  },
+  "layer2.1.bn1.weight": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 288352
+  },
+  "layer2.1.bn1.bias": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 288480
+  },
+  "layer2.1.conv2.weight": {
+    "shape": [
+      128,
+      128,
+      5
+    ],
+    "size": 81920,
+    "offset": 288608
+  },
+  "layer2.1.bn2.weight": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 370528
+  },
+  "layer2.1.bn2.bias": {
+    "shape": [
+      128
+    ],
+    "size": 128,
+    "offset": 370656
+  },
+  "layer3.0.conv1.weight": {
+    "shape": [
+      256,
+      128,
+      5
+    ],
+    "size": 163840,
+    "offset": 370784
+  },
+  "layer3.0.bn1.weight": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 534624
+  },
+  "layer3.0.bn1.bias": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 534880
+  },
+  "layer3.0.conv2.weight": {
+    "shape": [
+      256,
+      256,
+      5
+    ],
+    "size": 327680,
+    "offset": 535136
+  },
+  "layer3.0.bn2.weight": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 862816
+  },
+  "layer3.0.bn2.bias": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 863072
+  },
+  "layer3.0.shortcut.0.weight": {
+    "shape": [
+      256,
+      128,
+      1
+    ],
+    "size": 32768,
+    "offset": 863328
+  },
+  "layer3.0.shortcut.1.weight": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 896096
+  },
+  "layer3.0.shortcut.1.bias": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 896352
+  },
+  "layer3.1.conv1.weight": {
+    "shape": [
+      256,
+      256,
+      5
+    ],
+    "size": 327680,
+    "offset": 896608
+  },
+  "layer3.1.bn1.weight": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 1224288
+  },
+  "layer3.1.bn1.bias": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 1224544
+  },
+  "layer3.1.conv2.weight": {
+    "shape": [
+      256,
+      256,
+      5
+    ],
+    "size": 327680,
+    "offset": 1224800
+  },
+  "layer3.1.bn2.weight": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 1552480
+  },
+  "layer3.1.bn2.bias": {
+    "shape": [
+      256
+    ],
+    "size": 256,
+    "offset": 1552736
+  },
+  "layer4.0.conv1.weight": {
+    "shape": [
+      512,
+      256,
+      5
+    ],
+    "size": 655360,
+    "offset": 1552992
+  },
+  "layer4.0.bn1.weight": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 2208352
+  },
+  "layer4.0.bn1.bias": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 2208864
+  },
+  "layer4.0.conv2.weight": {
+    "shape": [
+      512,
+      512,
+      5
+    ],
+    "size": 1310720,
+    "offset": 2209376
+  },
+  "layer4.0.bn2.weight": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 3520096
+  },
+  "layer4.0.bn2.bias": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 3520608
+  },
+  "layer4.0.shortcut.0.weight": {
+    "shape": [
+      512,
+      256,
+      1
+    ],
+    "size": 131072,
+    "offset": 3521120
+  },
+  "layer4.0.shortcut.1.weight": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 3652192
+  },
+  "layer4.0.shortcut.1.bias": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 3652704
+  },
+  "layer4.1.conv1.weight": {
+    "shape": [
+      512,
+      512,
+      5
+    ],
+    "size": 1310720,
+    "offset": 3653216
+  },
+  "layer4.1.bn1.weight": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 4963936
+  },
+  "layer4.1.bn1.bias": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 4964448
+  },
+  "layer4.1.conv2.weight": {
+    "shape": [
+      512,
+      512,
+      5
+    ],
+    "size": 1310720,
+    "offset": 4964960
+  },
+  "layer4.1.bn2.weight": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 6275680
+  },
+  "layer4.1.bn2.bias": {
+    "shape": [
+      512
+    ],
+    "size": 512,
+    "offset": 6276192
+  },
+  "fc.weight": {
+    "shape": [
+      5,
+      512
+    ],
+    "size": 2560,
+    "offset": 6276704
+  },
+  "fc.bias": {
+    "shape": [
+      5
+    ],
+    "size": 5,
+    "offset": 6279264
+  }
+}
