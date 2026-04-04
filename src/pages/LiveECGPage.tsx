@@ -266,13 +266,13 @@ export function LiveECGPage() {
             {modelDownloadProgress < 100 && (
               <div className="mb-4 bg-blue-50 border border-blue-100 rounded-lg p-4 animate-in fade-in duration-500">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-semibold text-blue-800">Downloading AI Model Data (136MB)</span>
+                  <span className="text-sm font-semibold text-blue-800">Loading AI Model Data (25MB)</span>
                   <span className="text-sm font-bold text-blue-600">{modelDownloadProgress}%</span>
                 </div>
                 <div className="w-full bg-blue-200 rounded-full h-2.5">
                   <div className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" style={{ width: `${modelDownloadProgress}%` }}></div>
                 </div>
-                <p className="text-xs text-blue-600 mt-2">Caching to browser storage for instant future loading...</p>
+                <p className="text-xs text-blue-600 mt-2">Loading binary model into browser memory for instant execution...</p>
               </div>
             )}
             <div className="flex items-center justify-between mb-4">
