@@ -143,7 +143,7 @@ export function SessionsPage() {
                         <User className="w-4 h-4 text-white" />
                       </div>
                       <span className="text-sm font-medium text-gray-900">
-                        {session.patients.name}
+                        {session.patients?.name || 'Unknown Patient'}
                       </span>
                     </div>
                   </td>
@@ -190,7 +190,7 @@ export function SessionsPage() {
                         <Eye className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => downloadSession(session.id, session.patients.name)}
+                        onClick={() => downloadSession(session.id, session.patients?.name || 'Unknown')}
                         className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
                         title="Download"
                       >
