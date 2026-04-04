@@ -21,7 +21,7 @@ export function SessionsPage() {
     try {
       const { data, error } = await supabase
         .from('ecg_sessions')
-        .select('*, patients(*)')
+        .select('*, patients(*), predictions(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
@@ -124,6 +124,9 @@ export function SessionsPage() {
                   Status
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  AI Diagnosis
+                </th>
+                <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -164,6 +167,20 @@ export function SessionsPage() {
                     </span>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
+                    {session.predictions && session.predictions.length > 0 ? (
+                      <div className="flex flex-col">
+                        <span className={`text-sm font-bold ${session.predictions[0].predicted_class === 'NORMAL' ? 'text-green-600' : 'text-red-600'}`}>
+                          {session.predictions[0].predicted_class}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {session.predictions[0].confidence}% Confidence
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="text-sm text-gray-400 italic">Pending</span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => viewSession(session.id)}
@@ -193,7 +210,7 @@ export function SessionsPage() {
 
               {sessions.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="px-6 py-12 text-center">
+                  <td colSpan={7} className="px-6 py-12 text-center">
                     <Clock className="w-12 h-12 text-gray-300 mx-auto mb-4" />
                     <p className="text-gray-500">No sessions recorded yet</p>
                   </td>

@@ -1,6 +1,40 @@
 import { Brain, TrendingUp, Shield, AlertTriangle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { supabase } from '../lib/supabase';
 
 export function AnalyticsPage() {
+  const [totalPredictions, setTotalPredictions] = useState(0);
+  const [diseaseCount, setDiseaseCount] = useState<Record<string, number>>({});
+  const [avgConfidence, setAvgConfidence] = useState(0);
+
+  useEffect(() => {
+    loadAnalytics();
+  }, []);
+
+  const loadAnalytics = async () => {
+    try {
+      const { data, error } = await supabase.from('predictions').select('*');
+      if (error) throw error;
+      
+      if (data && data.length > 0) {
+        setTotalPredictions(data.length);
+        
+        let sumConfidence = 0;
+        const counts: Record<string, number> = {};
+        
+        data.forEach(pred => {
+          sumConfidence += pred.confidence;
+          counts[pred.predicted_class] = (counts[pred.predicted_class] || 0) + 1;
+        });
+        
+        setAvgConfidence(Math.round(sumConfidence / data.length));
+        setDiseaseCount(counts);
+      }
+    } catch (err) {
+      console.error('Error loading analytics:', err);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl p-8 text-white">
@@ -28,7 +62,7 @@ export function AnalyticsPage() {
               </p>
               <div className="bg-gray-100 rounded-lg p-3">
                 <p className="text-xs text-gray-500 mb-1">Status</p>
-                <p className="text-sm font-medium text-gray-900">Coming Soon</p>
+                <p className="text-sm font-medium text-green-600">Active & Deployed</p>
               </div>
             </div>
           </div>
@@ -45,8 +79,8 @@ export function AnalyticsPage() {
                 Automatic arrhythmia detection and classification
               </p>
               <div className="bg-gray-100 rounded-lg p-3">
-                <p className="text-xs text-gray-500 mb-1">Accuracy</p>
-                <p className="text-sm font-medium text-gray-900">Phase 2</p>
+                <p className="text-xs text-gray-500 mb-1">Total Diagnoses</p>
+                <p className="text-sm font-medium text-gray-900">{totalPredictions}</p>
               </div>
             </div>
           </div>
@@ -63,12 +97,30 @@ export function AnalyticsPage() {
                 Prediction reliability measurement
               </p>
               <div className="bg-gray-100 rounded-lg p-3">
-                <p className="text-xs text-gray-500 mb-1">Range</p>
-                <p className="text-sm font-medium text-gray-900">0-100%</p>
+                <p className="text-xs text-gray-500 mb-1">Average Model Confidence</p>
+                <p className="text-sm font-medium text-gray-900">{avgConfidence}%</p>
               </div>
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">
+        <h3 className="text-xl font-bold text-gray-900 mb-6">Diagnostic Distribution</h3>
+        
+        {totalPredictions === 0 ? (
+          <p className="text-gray-500">No predictions recorded yet. Run a session in Live ECG to generate data.</p>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {['NORMAL', 'MI', 'STTC', 'CD', 'HYP'].map((disease) => (
+              <div key={disease} className="bg-gray-50 border border-gray-200 rounded-lg p-4 text-center">
+                <p className="text-sm font-bold text-gray-700">{disease}</p>
+                <p className="text-3xl font-black text-blue-600 my-2">{diseaseCount[disease] || 0}</p>
+                <p className="text-xs text-gray-500">cases</p>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100">

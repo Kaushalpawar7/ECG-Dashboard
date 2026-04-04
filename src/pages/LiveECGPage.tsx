@@ -16,7 +16,13 @@ import { Patient } from '../types/database';
 import { useAuth } from '../contexts/AuthContext';
 import { database } from '../lib/firebase';
 import { ref, onValue } from 'firebase/database';
-import { inferenceService, PredictionResult } from '../services/InferenceService';
+
+// We define our local types for the batch evaluation results
+interface SessionResult {
+  diagnosis: string;
+  confidence: number;
+  distribution: Record<string, number>;
+}
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
 
@@ -27,19 +33,25 @@ export function LiveECGPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [leadsConnected, setLeadsConnected] = useState(true);
-  const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [ecgData, setEcgData] = useState<number[]>([]);
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [modelDownloadProgress, setModelDownloadProgress] = useState<number>(0);
+  const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const firebaseListenerRef = useRef<any>(null);
   const lastUpdateRef = useRef<number>(0);
-
+  
+  // NEW: Store the entire session data for post-session analysis
+  const sessionDataRef = useRef<number[]>([]);
+  const workerRef = useRef<Worker | null>(null);
+  
   /**
    * Realistic ECG Generator (P-QRS-T Model)
    * Based on Gaussian synthesis for medical realism
@@ -73,15 +85,50 @@ export function LiveECGPage() {
 
   useEffect(() => {
     loadPatients();
-    inferenceService.loadModelFromWeights(undefined, undefined, (progress: number) => {
-      setModelDownloadProgress(progress);
-    });
+    
+    // Initialize Web Worker
+    workerRef.current = new Worker(new URL('../workers/inferenceWorker.ts', import.meta.url), { type: 'module' });
+    
+    workerRef.current.onmessage = (e) => {
+      const { type, progress, result, error } = e.data;
+      if (type === 'PROGRESS') {
+        setModelDownloadProgress(progress);
+      } else if (type === 'ANALYSIS_PROGRESS') {
+        setAnalysisProgress(progress);
+      } else if (type === 'ANALYSIS_COMPLETE') {
+        setIsAnalyzing(false);
+        setSessionResult(result);
+        savePredictionToDatabase(result);
+      } else if (type === 'ERROR') {
+        console.error('Worker Error:', error);
+        setIsAnalyzing(false);
+      }
+    };
+
+    // Ask worker to init the TFJS model in background
+    workerRef.current.postMessage({ type: 'INIT' });
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
       if (firebaseListenerRef.current) firebaseListenerRef.current();
+      if (workerRef.current) workerRef.current.terminate();
     };
   }, []);
+
+  const savePredictionToDatabase = async (result: SessionResult) => {
+    if (!sessionId || !selectedPatient) return;
+    try {
+      await supabase.from('predictions').insert([{
+        session_id: sessionId,
+        patient_id: selectedPatient.id,
+        predicted_class: result.diagnosis,
+        confidence: result.confidence
+      }]);
+    } catch (err) {
+      console.error('Error saving prediction to DB:', err);
+    }
+  };
 
   // 1. ESP32 Connection Sentinel (Multi-Slot Support)
   useEffect(() => {
@@ -171,26 +218,19 @@ export function LiveECGPage() {
       setEcgData([]);
       setTimestamps([]);
       setSessionDuration(0);
+      setSessionResult(null);
+      sessionDataRef.current = [];
 
       // Start Realistic Simulation
       let simTime = 0;
-      let predictionCounter = 0;
       intervalRef.current = setInterval(async () => {
         const simVal = generateECGPoint(simTime, selectedPatient.age);
+        
+        // Save to full session history
+        sessionDataRef.current.push(simVal);
+
         setEcgData((prev) => {
-          const newData = [...prev, simVal].slice(-300);
-
-          // Run inference every ~2 seconds (40 points at 50ms)
-          predictionCounter++;
-          if (predictionCounter >= 40) {
-            predictionCounter = 0;
-            // Pad to 1000 samples for the model
-            const padded = [...newData];
-            while (padded.length < 1000) padded.unshift(2000);
-            inferenceService.predict(padded).then(res => setPrediction(res));
-          }
-
-          return newData;
+          return [...prev, simVal].slice(-300);
         });
         setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
         simTime += 0.05;
@@ -213,6 +253,10 @@ export function LiveECGPage() {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
 
+      setIsRecording(false);
+      setIsAnalyzing(true);
+      setAnalysisProgress(0);
+
       await supabase
         .from('ecg_sessions')
         .update({
@@ -222,8 +266,12 @@ export function LiveECGPage() {
         })
         .eq('id', sessionId);
 
-      setIsRecording(false);
-      setSessionId(null);
+      if (workerRef.current && sessionDataRef.current.length > 0) {
+        workerRef.current.postMessage({ type: 'PREDICT', payload: sessionDataRef.current });
+      } else {
+        setIsAnalyzing(false);
+      }
+
     } catch (error) {
       console.error('Error stopping recording:', error);
     }
@@ -304,18 +352,29 @@ export function LiveECGPage() {
             </div>
 
             <div className="bg-black rounded-lg p-4 relative" style={{ height: '400px' }}>
-              {prediction && isRecording && (
-                <div className="absolute top-6 left-6 z-10 bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-lg shadow-xl animate-in fade-in slide-in-from-top-4 duration-500">
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-1">AI Diagnosis</p>
-                  <div className="flex items-baseline space-x-2">
-                    <p className={`text-2xl font-black ${prediction.label === 'NORMAL' ? 'text-green-400' : 'text-red-400'
-                      }`}>
-                      {prediction.label}
+              {isAnalyzing && (
+                 <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p className="text-white font-bold text-lg mb-2">Analyzing Full 2-Minute Session...</p>
+                    <div className="w-64 bg-gray-800 rounded-full h-2">
+                       <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${analysisProgress}%` }}></div>
+                    </div>
+                 </div>
+              )}
+
+              {sessionResult && !isRecording && !isAnalyzing && (
+                <div className="absolute top-6 left-6 z-10 bg-white/10 backdrop-blur-md border border-white/20 p-6 rounded-lg shadow-xl animate-in fade-in slide-in-from-top-4 duration-500">
+                  <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-2">Session Diagnosis Report</p>
+                  <div className="flex items-baseline space-x-3 mb-2">
+                    <p className={`text-4xl font-black ${sessionResult.diagnosis === 'NORMAL' ? 'text-green-400' : 'text-red-400'}`}>
+                      {sessionResult.diagnosis}
                     </p>
-                    <p className="text-sm text-gray-300">{prediction.confidence}% match</p>
+                    <p className="text-lg text-gray-300">{sessionResult.confidence}% match</p>
                   </div>
+                  <p className="text-sm text-gray-400">Analysis completed across 100% of recorded data.</p>
                 </div>
               )}
+
               {isRecording ? (
                 <Line
                   data={chartData}

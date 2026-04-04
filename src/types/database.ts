@@ -18,6 +18,7 @@ export interface ECGSession {
   duration: number;
   status: 'active' | 'completed' | 'stopped';
   created_at: string;
+  predictions?: Prediction[];
 }
 
 export interface ECGData {
