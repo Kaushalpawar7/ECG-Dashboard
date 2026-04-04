@@ -73,7 +73,7 @@ export function LiveECGPage() {
 
   useEffect(() => {
     loadPatients();
-    inferenceService.loadModelFromWeights(undefined, (progress) => {
+    inferenceService.loadModelFromWeights(undefined, undefined, (progress: number) => {
       setModelDownloadProgress(progress);
     });
     return () => {
