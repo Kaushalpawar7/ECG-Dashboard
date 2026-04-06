@@ -38,9 +38,10 @@ export function LiveECGPage() {
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [modelDownloadProgress, setModelDownloadProgress] = useState<number>(0);
-  const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
+   const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [preRecordStep, setPreRecordStep] = useState<0 | 1 | 2>(0);
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -190,7 +191,7 @@ export function LiveECGPage() {
     }
   };
 
-  const startRecording = async () => {
+  const initiatePreRecordCheck = () => {
     if (modelDownloadProgress < 100) {
       alert('Please wait for the AI Model to fully download before recording.');
       return;
@@ -206,6 +207,12 @@ export function LiveECGPage() {
       return;
     }
 
+    setPreRecordStep(1);
+  };
+
+  const startRealRecording = async () => {
+    if (!selectedPatient) return;
+    setPreRecordStep(0);
     try {
       const { data, error } = await supabase
         .from('ecg_sessions')
@@ -421,7 +428,7 @@ export function LiveECGPage() {
               <div className="flex items-center space-x-3">
                 {!isRecording ? (
                   <button
-                    onClick={startRecording}
+                    onClick={initiatePreRecordCheck}
                     disabled={!selectedPatient}
                     className="flex items-center space-x-2 bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 transition"
                   >
@@ -469,6 +476,52 @@ export function LiveECGPage() {
           </div>
         </div>
       </div>
+
+      {/* Pre-flight Safety Checks Modal */}
+      {preRecordStep > 0 && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-blue-600 p-4 flex items-center space-x-3 text-white">
+              <AlertCircle className="w-6 h-6" />
+              <h3 className="text-xl font-bold">Safety Check ({preRecordStep}/2)</h3>
+            </div>
+            
+            <div className="p-6">
+              {preRecordStep === 1 ? (
+                <>
+                  <p className="text-lg text-gray-800 font-medium mb-2">Are the ECG leads properly attached?</p>
+                  <p className="text-sm text-gray-500 mb-6">Ensure that all electrodes are firmly adhered to the patient's skin and connected to the hardware interface before proceeding.</p>
+                  
+                  <div className="flex justify-end space-x-3">
+                    <button onClick={() => setPreRecordStep(0)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium transition">
+                      Cancel
+                    </button>
+                    <button onClick={() => setPreRecordStep(2)} className="px-6 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold transition">
+                      Yes, Leads Attached
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="text-lg text-gray-800 font-medium mb-2">Are electrodes in correct positions?</p>
+                  <p className="text-sm text-gray-500 mb-6">Verify that the placement conforms to standard anatomical positioning to ensure the AI model receives accurate vector data.</p>
+                  
+                  <div className="flex justify-end space-x-3">
+                    <button onClick={() => setPreRecordStep(0)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium transition">
+                      Cancel
+                    </button>
+                    <button onClick={startRealRecording} className="px-6 py-2 bg-green-600 text-white hover:bg-green-700 rounded-lg font-bold transition flex items-center space-x-2">
+                      <Play className="w-4 h-4" />
+                      <span>Start Recording</span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
