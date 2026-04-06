@@ -77,7 +77,7 @@ function AppContent() {
       case 'sessions':
         return <SessionsPage />;
       case 'analytics':
-        return <AnalyticsPage />;
+        return <AnalyticsPage onNavigate={setCurrentPage} />;
       case 'settings':
         return <SettingsPage />;
       default:
