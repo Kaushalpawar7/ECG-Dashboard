@@ -296,8 +296,15 @@ export function LiveECGPage() {
       {
         label: 'ECG Signal',
         data: ecgData,
-        borderColor: 'rgb(37, 99, 235)',
-        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+        borderColor: '#06b6d4',
+        backgroundColor: (context: any) => {
+          const ctx = context.chart.ctx;
+          const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+          gradient.addColorStop(0, 'rgba(6, 182, 212, 0.4)');
+          gradient.addColorStop(1, 'rgba(6, 182, 212, 0)');
+          return gradient;
+        },
+        fill: true,
         borderWidth: 2,
         tension: 0.1,
         pointRadius: (context: any) => {
@@ -384,6 +391,7 @@ export function LiveECGPage() {
 
               {isRecording ? (
                 <Line
+                  className="drop-shadow-[0_0_6px_rgba(6,182,212,0.6)]"
                   data={chartData}
                   options={{
                     responsive: true,
@@ -393,8 +401,9 @@ export function LiveECGPage() {
                       x: { display: false },
                       y: {
                         beginAtZero: false,
-                        grid: { color: '#1f2937' },
-                        ticks: { color: '#9ca3af' }
+                        border: { dash: [4, 4] },
+                        grid: { color: 'rgba(255, 255, 255, 0.08)' },
+                        ticks: { color: '#6b7280' }
                       }
                     },
                     plugins: { legend: { display: false } }
@@ -403,7 +412,10 @@ export function LiveECGPage() {
               ) : (
                 <div className="h-full flex items-center justify-center">
                   <div className="text-center">
-                    <AlertCircle className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                    <div className="relative inline-flex mb-4">
+                      <span className="absolute inset-0 rounded-full bg-cyan-500 opacity-20 animate-ping"></span>
+                      <AlertCircle className="relative w-12 h-12 text-gray-500 mx-auto" />
+                    </div>
                     <p className="text-gray-400">Press Start Recording to begin monitoring</p>
                   </div>
                 </div>
@@ -414,14 +426,17 @@ export function LiveECGPage() {
               <div className="flex items-center space-x-8">
                 <div>
                   <p className="text-sm text-gray-500">Target Heart Rate</p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-2xl font-bold text-gray-900 tabular-nums">
                     {isRecording ? (selectedPatient?.age && selectedPatient.age < 15 ? '100' : '75') : '--'}
                     <span className="text-sm ml-1 font-normal text-gray-500">bpm</span>
                   </p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500">Duration</p>
-                  <p className="text-2xl font-bold text-gray-900">{formatDuration(sessionDuration)}</p>
+                  <p className="text-sm text-gray-500 flex items-center">
+                    {isRecording && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse mr-2 shadow-[0_0_4px_rgba(239,68,68,0.8)]"></span>}
+                    Duration
+                  </p>
+                  <p className="text-2xl font-bold text-gray-900 tabular-nums">{formatDuration(sessionDuration)}</p>
                 </div>
               </div>
 
@@ -430,7 +445,7 @@ export function LiveECGPage() {
                   <button
                     onClick={initiatePreRecordCheck}
                     disabled={!selectedPatient}
-                    className="flex items-center space-x-2 bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 transition"
+                    className="flex items-center space-x-2 bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 hover:scale-[1.02] hover:shadow-[0_4px_14px_rgba(22,163,74,0.4)] transition-all"
                   >
                     <Play className="w-5 h-5" />
                     <span className="font-bold">Start Recording</span>
@@ -438,7 +453,7 @@ export function LiveECGPage() {
                 ) : (
                   <button
                     onClick={stopRecording}
-                    className="flex items-center space-x-2 bg-red-600 text-white px-8 py-3 rounded-lg hover:bg-red-700 transition"
+                    className="flex items-center space-x-2 bg-red-600 text-white px-8 py-3 rounded-lg hover:bg-red-700 hover:scale-[1.02] hover:shadow-[0_4px_14px_rgba(220,38,38,0.4)] transition-all"
                   >
                     <Square className="w-5 h-5" />
                     <span className="font-bold">Stop Recording</span>
@@ -452,23 +467,26 @@ export function LiveECGPage() {
         <div className="space-y-6">
           <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Select Patient</h3>
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-[500px] overflow-y-auto custom-scrollbar pr-2">
               {patients.map((patient) => (
                 <button
                   key={patient.id}
                   onClick={() => !isRecording && setSelectedPatient(patient)}
                   disabled={isRecording}
-                  className={`w-full flex items-center space-x-3 p-3 rounded-lg transition ${selectedPatient?.id === patient.id
-                    ? 'bg-blue-50 border-2 border-blue-500'
-                    : 'bg-gray-50 hover:bg-gray-100 border-2 border-transparent'
+                  className={`relative w-full flex items-center space-x-3 p-3 rounded-xl transition-all duration-300 ${selectedPatient?.id === patient.id
+                    ? 'bg-blue-50 border-l-4 border-l-blue-600 shadow-sm'
+                    : 'bg-transparent hover:bg-gray-50 hover:translate-x-1 border-l-4 border-l-transparent'
                     } ${isRecording ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center">
+                  {selectedPatient?.id === patient.id && (
+                    <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_4px_rgba(34,197,94,0.8)]"></span>
+                  )}
+                  <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
                     <User className="w-5 h-5 text-white" />
                   </div>
                   <div className="text-left">
-                    <p className="font-medium text-gray-900">{patient.name}</p>
-                    <p className="text-xs text-gray-500">{patient.age}y, {patient.gender}</p>
+                    <p className="font-bold text-gray-900">{patient.name}</p>
+                    <p className="text-xs font-semibold text-gray-500 mt-0.5">{patient.age}y, {patient.gender}</p>
                   </div>
                 </button>
               ))}
