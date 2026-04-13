@@ -13,6 +13,7 @@ export function SessionsPage() {
   const [sessions, setSessions] = useState<SessionWithPatient[]>([]);
   const [sessionData, setSessionData] = useState<ECGData[]>([]);
   const [showModal, setShowModal] = useState(false);
+  const [generatingId, setGeneratingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSessions();
@@ -34,6 +35,7 @@ export function SessionsPage() {
 
   const generateReport = async (session: SessionWithPatient) => {
     try {
+      setGeneratingId(session.id);
       const { data: ecgPoints, error } = await supabase
         .from('ecg_data')
         .select('*')
@@ -153,6 +155,8 @@ export function SessionsPage() {
     } catch (error) {
       console.error('Error generating report:', error);
       alert('Error generating PDF report. Please try again.');
+    } finally {
+      setGeneratingId(null);
     }
   };
 
@@ -315,10 +319,19 @@ export function SessionsPage() {
                       </button>
                       <button
                         onClick={() => generateReport(session)}
-                        className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
-                        title="Generate PDF Report"
+                        disabled={generatingId === session.id}
+                        className={`p-2 rounded-lg transition ${
+                          generatingId === session.id 
+                          ? 'bg-indigo-50 text-indigo-400 cursor-wait' 
+                          : 'text-indigo-600 hover:bg-indigo-50'
+                        }`}
+                        title={generatingId === session.id ? "Generating PDF..." : "Generate PDF Report"}
                       >
-                        <FileText className="w-4 h-4" />
+                        {generatingId === session.id ? (
+                          <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <FileText className="w-4 h-4" />
+                        )}
                       </button>
                       <button
                         onClick={() => downloadSession(session.id, session.patients?.name || 'Unknown')}

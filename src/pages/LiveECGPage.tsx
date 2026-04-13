@@ -41,6 +41,7 @@ export function LiveECGPage() {
   const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
+  const [isFinalizing, setIsFinalizing] = useState(false);
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -261,8 +262,32 @@ export function LiveECGPage() {
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
 
       setIsRecording(false);
+      setIsFinalizing(true);
       setIsAnalyzing(true);
       setAnalysisProgress(0);
+
+      if (workerRef.current && sessionDataRef.current.length > 0) {
+        workerRef.current.postMessage({ type: 'PREDICT', payload: sessionDataRef.current });
+      }
+
+      // Final Step: Persist all recorded points to the database for report generation
+      // We do this BEFORE updating session status to ensure the data is there for anyone checking
+      if (sessionDataRef.current.length > 0 && sessionId) {
+        const pointsToInsert = sessionDataRef.current.map((val, idx) => ({
+          session_id: sessionId,
+          ecg_value: Math.round(val),
+          // We calculate the relative timestamp (50ms intervals)
+          timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 50).toISOString()
+        }));
+
+        // Insert in batches to avoid Supabase/HTTP limits
+        const BATCH_SIZE = 500;
+        for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
+          const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
+          const { error: insertError } = await supabase.from('ecg_data').insert(batch);
+          if (insertError) console.error('Error inserting ECG batch:', insertError);
+        }
+      }
 
       await supabase
         .from('ecg_sessions')
@@ -273,14 +298,14 @@ export function LiveECGPage() {
         })
         .eq('id', sessionId);
 
-      if (workerRef.current && sessionDataRef.current.length > 0) {
-        workerRef.current.postMessage({ type: 'PREDICT', payload: sessionDataRef.current });
-      } else {
+      if (!workerRef.current || sessionDataRef.current.length === 0) {
         setIsAnalyzing(false);
       }
+      setIsFinalizing(false);
 
     } catch (error) {
       console.error('Error stopping recording:', error);
+      setIsFinalizing(false);
     }
   };
 
@@ -307,7 +332,16 @@ export function LiveECGPage() {
         fill: true,
         borderWidth: 2,
         tension: 0.1,
-        pointRadius: 0,
+        pointRadius: (context: any) => {
+          const val = context.dataset.data[context.dataIndex];
+          // Restore the red dot for R-peaks (typically > 2800 in this simulation)
+          return val > 2750 ? 4 : 0;
+        },
+        pointBackgroundColor: (context: any) => {
+          const val = context.dataset.data[context.dataIndex];
+          return val > 2750 ? '#ef4444' : 'transparent';
+        },
+        pointBorderColor: 'transparent',
         spanGaps: true,
       },
     ],
@@ -359,13 +393,17 @@ export function LiveECGPage() {
             </div>
 
             <div className="bg-black rounded-lg p-4 relative" style={{ height: '400px' }}>
-              {isAnalyzing && (
+              {(isAnalyzing || isFinalizing) && (
                  <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg">
                     <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="text-white font-bold text-lg mb-2">Analyzing Full Session...</p>
-                    <div className="w-64 bg-gray-800 rounded-full h-2">
-                       <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${analysisProgress}%` }}></div>
-                    </div>
+                    <p className="text-white font-bold text-lg mb-2">
+                      {isFinalizing ? 'Finalizing Session & Saving Data...' : 'AI Analysis in Progress...'}
+                    </p>
+                    {isAnalyzing && !isFinalizing && (
+                      <div className="w-64 bg-gray-800 rounded-full h-2">
+                         <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${analysisProgress}%` }}></div>
+                      </div>
+                    )}
                  </div>
               )}
 
@@ -446,10 +484,13 @@ export function LiveECGPage() {
                 ) : (
                   <button
                     onClick={stopRecording}
-                    className="flex items-center space-x-2 bg-red-600 text-white px-8 py-3 rounded-lg hover:bg-red-700 hover:scale-[1.02] hover:shadow-[0_4px_14px_rgba(220,38,38,0.4)] transition-all"
+                    disabled={isFinalizing}
+                    className={`flex items-center space-x-2 bg-red-600 text-white px-8 py-3 rounded-lg transition-all ${
+                      isFinalizing ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-700 hover:scale-[1.02] hover:shadow-[0_4px_14px_rgba(220,38,38,0.4)]'
+                    }`}
                   >
                     <Square className="w-5 h-5" />
-                    <span className="font-bold">Stop Recording</span>
+                    <span className="font-bold">{isFinalizing ? 'Saving...' : 'Stop Recording'}</span>
                   </button>
                 )}
               </div>
