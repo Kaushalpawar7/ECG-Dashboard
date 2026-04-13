@@ -38,10 +38,9 @@ export function LiveECGPage() {
   const [timestamps, setTimestamps] = useState<string[]>([]);
   const [sessionDuration, setSessionDuration] = useState(0);
   const [modelDownloadProgress, setModelDownloadProgress] = useState<number>(0);
-   const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
+  const [sessionResult, setSessionResult] = useState<SessionResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
-  const [preRecordStep, setPreRecordStep] = useState<0 | 1 | 2>(0);
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -49,15 +48,23 @@ export function LiveECGPage() {
   const firebaseListenerRef = useRef<any>(null);
   const lastUpdateRef = useRef<number>(0);
   
-  // NEW: Store the entire session data for post-session analysis
+  // Store the entire session data for post-session analysis
   const sessionDataRef = useRef<number[]>([]);
   const workerRef = useRef<Worker | null>(null);
   
   /**
    * Realistic ECG Generator (P-QRS-T Model)
-   * Based on Gaussian synthesis for medical realism
+   * Enhanced with physiological noise and hardware synchronization
    */
-  const generateECGPoint = (time: number, age: number = 30) => {
+  const generateECGPoint = (time: number, isHardwareValid: boolean, age: number = 30) => {
+    const baseline = 2000;
+    const amplitude = 1000;
+
+    // If leads are removed or device goes offline during session, return a flat line with minimal jitter
+    if (!isHardwareValid) {
+      return baseline + (Math.random() - 0.5) * 5; 
+    }
+
     // 1. Calculate target BPM based on age
     const baseBPM = age < 15 ? 100 : age > 60 ? 70 : 75;
     const heartRateVariation = Math.sin(time * 0.5) * 2;
@@ -74,14 +81,16 @@ export function LiveECGPage() {
       0.2 * Math.exp(-Math.pow((t - 0.16), 2) / 0.00005);
     const tWave = 0.25 * Math.exp(-Math.pow((t - 0.35), 2) / 0.005);
 
-    // 4. Baseline noise and wander
-    const wander = 0.05 * Math.sin(time * 2);
-    const noise = (Math.random() - 0.5) * 0.02;
+    // 4. Advanced realism: Baseline wander (Respiration)
+    const wander = 0.15 * Math.sin(time * 0.8);
+    
+    // 5. Advanced realism: Muscle artifact and thermal noise
+    const noise = (Math.random() - 0.5) * 0.04;
+    
+    // 6. Power line interference (50Hz hum simulation)
+    const interference = 0.01 * Math.sin(time * 50 * 2 * Math.PI);
 
-    const baseline = 2000;
-    const amplitude = 1000;
-
-    return baseline + (pWave + qrsComplex + tWave + wander + noise) * amplitude;
+    return baseline + (pWave + qrsComplex + tWave + wander + noise + interference) * amplitude;
   };
 
   useEffect(() => {
@@ -191,28 +200,18 @@ export function LiveECGPage() {
     }
   };
 
-  const initiatePreRecordCheck = () => {
-    if (modelDownloadProgress < 100) {
-      alert('Please wait for the AI Model to fully download before recording.');
-      return;
-    }
-
+  const startRealRecording = async () => {
     if (!selectedPatient || !user) {
       alert('Please select a patient first');
       return;
     }
-
-    if (!isConnected) {
-      alert('Error: Device Not Online. Please ensure the ESP32 is powered and connected to the network.');
+    
+    // Requirement check: Device must be online and leads must be connected to START
+    if (!isConnected || !leadsConnected) {
+      alert('Cannot start recording: Device is Offline or Leads are Disconnected.');
       return;
     }
 
-    setPreRecordStep(1);
-  };
-
-  const startRealRecording = async () => {
-    if (!selectedPatient) return;
-    setPreRecordStep(0);
     try {
       const { data, error } = await supabase
         .from('ecg_sessions')
@@ -231,7 +230,8 @@ export function LiveECGPage() {
       // Start Realistic Simulation
       let simTime = 0;
       intervalRef.current = setInterval(async () => {
-        const simVal = generateECGPoint(simTime, selectedPatient.age);
+        // Condition check for live simulation: hardware must be valid
+        const simVal = generateECGPoint(simTime, (isConnected && leadsConnected), selectedPatient.age);
         
         // Save to full session history
         sessionDataRef.current.push(simVal);
@@ -307,14 +307,7 @@ export function LiveECGPage() {
         fill: true,
         borderWidth: 2,
         tension: 0.1,
-        pointRadius: (context: any) => {
-          const val = context.dataset.data[context.dataIndex];
-          return val > 2800 ? 5 : 0;
-        },
-        pointBackgroundColor: (context: any) => {
-          const val = context.dataset.data[context.dataIndex];
-          return val > 2800 ? 'rgb(239, 44, 44)' : 'transparent';
-        },
+        pointRadius: 0,
         spanGaps: true,
       },
     ],
@@ -369,7 +362,7 @@ export function LiveECGPage() {
               {isAnalyzing && (
                  <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center rounded-lg">
                     <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p className="text-white font-bold text-lg mb-2">Analyzing Full 2-Minute Session...</p>
+                    <p className="text-white font-bold text-lg mb-2">Analyzing Full Session...</p>
                     <div className="w-64 bg-gray-800 rounded-full h-2">
                        <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${analysisProgress}%` }}></div>
                     </div>
@@ -443,7 +436,7 @@ export function LiveECGPage() {
               <div className="flex items-center space-x-3">
                 {!isRecording ? (
                   <button
-                    onClick={initiatePreRecordCheck}
+                    onClick={startRealRecording}
                     disabled={!selectedPatient}
                     className="flex items-center space-x-2 bg-green-600 text-white px-8 py-3 rounded-lg hover:bg-green-700 hover:scale-[1.02] hover:shadow-[0_4px_14px_rgba(22,163,74,0.4)] transition-all"
                   >
@@ -494,52 +487,6 @@ export function LiveECGPage() {
           </div>
         </div>
       </div>
-
-      {/* Pre-flight Safety Checks Modal */}
-      {preRecordStep > 0 && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200">
-            <div className="bg-blue-600 p-4 flex items-center space-x-3 text-white">
-              <AlertCircle className="w-6 h-6" />
-              <h3 className="text-xl font-bold">Safety Check ({preRecordStep}/2)</h3>
-            </div>
-            
-            <div className="p-6">
-              {preRecordStep === 1 ? (
-                <>
-                  <p className="text-lg text-gray-800 font-medium mb-2">Are the ECG leads properly attached?</p>
-                  <p className="text-sm text-gray-500 mb-6">Ensure that all electrodes are firmly adhered to the patient's skin and connected to the hardware interface before proceeding.</p>
-                  
-                  <div className="flex justify-end space-x-3">
-                    <button onClick={() => setPreRecordStep(0)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium transition">
-                      Cancel
-                    </button>
-                    <button onClick={() => setPreRecordStep(2)} className="px-6 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-lg font-bold transition">
-                      Yes, Leads Attached
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <p className="text-lg text-gray-800 font-medium mb-2">Are electrodes in correct positions?</p>
-                  <p className="text-sm text-gray-500 mb-6">Verify that the placement conforms to standard anatomical positioning to ensure the AI model receives accurate vector data.</p>
-                  
-                  <div className="flex justify-end space-x-3">
-                    <button onClick={() => setPreRecordStep(0)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg font-medium transition">
-                      Cancel
-                    </button>
-                    <button onClick={startRealRecording} className="px-6 py-2 bg-green-600 text-white hover:bg-green-700 rounded-lg font-bold transition flex items-center space-x-2">
-                      <Play className="w-4 h-4" />
-                      <span>Start Recording</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
     </div>
   );
 }

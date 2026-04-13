@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Clock, Download, Eye, Trash2, User } from 'lucide-react';
+import { Clock, Download, Eye, FileText, Trash2, User } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { ECGSession, Patient, ECGData } from '../types/database';
+import { jsPDF } from 'jspdf';
 
 interface SessionWithPatient extends ECGSession {
   patients: Patient;
+  predictions?: any[];
 }
 
 export function SessionsPage() {
   const [sessions, setSessions] = useState<SessionWithPatient[]>([]);
-  const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [sessionData, setSessionData] = useState<ECGData[]>([]);
   const [showModal, setShowModal] = useState(false);
 
@@ -31,21 +32,127 @@ export function SessionsPage() {
     }
   };
 
-  const viewSession = async (sessionId: string) => {
+  const generateReport = async (session: SessionWithPatient) => {
     try {
-      const { data, error } = await supabase
+      const { data: ecgPoints, error } = await supabase
         .from('ecg_data')
         .select('*')
-        .eq('session_id', sessionId)
-        .order('timestamp', { ascending: true });
+        .eq('session_id', session.id)
+        .order('timestamp', { ascending: true })
+        .limit(120); // ~6 seconds at 20Hz (50ms interval)
 
       if (error) throw error;
-      setSessionData(data || []);
-      setSelectedSession(sessionId);
-      setShowModal(true);
+
+      const doc = new jsPDF();
+      const pageWidth = doc.internal.pageSize.getWidth();
+      
+      // 1. Header
+      doc.setFillColor(37, 99, 235);
+      doc.rect(0, 0, pageWidth, 40, 'F');
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(24);
+      doc.setFont('helvetica', 'bold');
+      doc.text('HealthUp Smart ECG Report', 20, 25);
+      
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Report Generated: ${new Date().toLocaleString()}`, pageWidth - 20, 25, { align: 'right' });
+
+      // 2. Patient & Session Metadata
+      doc.setTextColor(31, 41, 55);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('1. Patient Information', 20, 55);
+      
+      doc.setDrawColor(229, 231, 235);
+      doc.line(20, 58, pageWidth - 20, 58);
+
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Name: ${session.patients?.name || 'N/A'}`, 25, 68);
+      doc.text(`Age: ${session.patients?.age || 'N/A'} years`, 25, 75);
+      doc.text(`Gender: ${session.patients?.gender || 'N/A'}`, 25, 82);
+      doc.text(`Patient ID: ${session.patient_id}`, 25, 89);
+
+      doc.text(`Session ID: ${session.id.slice(0, 8)}`, pageWidth - 25, 68, { align: 'right' });
+      doc.text(`Date: ${new Date(session.start_time).toLocaleDateString()}`, pageWidth - 25, 75, { align: 'right' });
+      doc.text(`Time: ${new Date(session.start_time).toLocaleTimeString()}`, pageWidth - 25, 82, { align: 'right' });
+      doc.text(`Duration: ${formatDuration(session.duration)}`, pageWidth - 25, 89, { align: 'right' });
+
+      // 3. AI Diagnosis Result
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('2. AI Diagnostic Summary', 20, 105);
+      doc.line(20, 108, pageWidth - 20, 108);
+
+      const prediction = session.predictions?.[0];
+      if (prediction) {
+        const isNormal = prediction.predicted_class === 'NORMAL';
+        doc.setFillColor(isNormal ? 240 : 254, isNormal ? 253 : 242, isNormal ? 244 : 242);
+        doc.rect(20, 115, pageWidth - 40, 30, 'F');
+        
+        doc.setTextColor(isNormal ? 21 : 185, isNormal ? 128 : 28, isNormal ? 61 : 28);
+        doc.setFontSize(18);
+        doc.text(prediction.predicted_class, pageWidth / 2, 130, { align: 'center' });
+        
+        doc.setFontSize(10);
+        doc.text(`CNN Model Confidence: ${prediction.confidence}%`, pageWidth / 2, 138, { align: 'center' });
+      } else {
+        doc.setFontSize(11);
+        doc.text('Pending Analysis / Placeholder State', 25, 120);
+      }
+
+      // 4. ECG Waveform Snapshot (6-Second Rhythm Strip)
+      doc.setTextColor(31, 41, 55);
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text('3. Rhythm Strip (6-Second Sample)', 20, 160);
+      doc.line(20, 163, pageWidth - 20, 163);
+
+      if (ecgPoints && ecgPoints.length > 0) {
+        // Draw a simulated ECG grid
+        const chartX = 20;
+        const chartY = 175;
+        const chartWidth = pageWidth - 40;
+        const chartHeight = 60;
+
+        doc.setDrawColor(255, 230, 230);
+        for (let i = 0; i <= 20; i++) {
+          const x = chartX + (i * chartWidth) / 20;
+          doc.line(x, chartY, x, chartY + chartHeight);
+        }
+        for (let i = 0; i <= 6; i++) {
+          const y = chartY + (i * chartHeight) / 6;
+          doc.line(chartX, y, chartX + chartWidth, y);
+        }
+
+        doc.setDrawColor(37, 99, 235);
+        doc.setLineWidth(0.5);
+        
+        const minVal = 1000;
+        const maxVal = 3000;
+        const scaleY = chartHeight / (maxVal - minVal);
+        const stepX = chartWidth / ecgPoints.length;
+
+        for (let i = 0; i < ecgPoints.length - 1; i++) {
+          const x1 = chartX + i * stepX;
+          const y1 = chartY + chartHeight - (ecgPoints[i].ecg_value - minVal) * scaleY;
+          const x2 = chartX + (i + 1) * stepX;
+          const y2 = chartY + chartHeight - (ecgPoints[i + 1].ecg_value - minVal) * scaleY;
+          doc.line(x1, y1, x2, y2);
+        }
+      }
+
+      // 5. Footer
+      doc.setFontSize(8);
+      doc.setTextColor(156, 163, 175);
+      doc.text('This report is generated by HealthUp AI and should be reviewed by a qualified healthcare professional.', pageWidth / 2, 280, { align: 'center' });
+      doc.text('© 2026 ResNet-1D Cardiac Diagnostic Suite', pageWidth / 2, 285, { align: 'center' });
+
+      doc.save(`ECG_Report_${session.patients?.name || 'Patient'}_${session.id.slice(0,8)}.pdf`);
     } catch (error) {
-      console.error('Error loading session data:', error);
-      alert('Error loading session data. Please try again.');
+      console.error('Error generating report:', error);
+      alert('Error generating PDF report. Please try again.');
     }
   };
 
@@ -74,6 +181,23 @@ export function SessionsPage() {
     } catch (error) {
       console.error('Error downloading session:', error);
       alert('Error downloading session. Please try again.');
+    }
+  };
+
+  const viewSession = async (sessionId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('ecg_data')
+        .select('*')
+        .eq('session_id', sessionId)
+        .order('timestamp', { ascending: true });
+
+      if (error) throw error;
+      setSessionData(data || []);
+      setShowModal(true);
+    } catch (error) {
+      console.error('Error loading session data:', error);
+      alert('Error loading session data. Please try again.');
     }
   };
 
@@ -185,14 +309,21 @@ export function SessionsPage() {
                       <button
                         onClick={() => viewSession(session.id)}
                         className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                        title="View"
+                        title="View Raw Data"
                       >
                         <Eye className="w-4 h-4" />
                       </button>
                       <button
+                        onClick={() => generateReport(session)}
+                        className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                        title="Generate PDF Report"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </button>
+                      <button
                         onClick={() => downloadSession(session.id, session.patients?.name || 'Unknown')}
                         className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
-                        title="Download"
+                        title="Download CSV"
                       >
                         <Download className="w-4 h-4" />
                       </button>
@@ -226,7 +357,7 @@ export function SessionsPage() {
           <div className="bg-white rounded-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">
             <div className="p-6 border-b border-gray-200">
               <div className="flex items-center justify-between">
-                <h2 className="text-2xl font-bold text-gray-900">Session Data</h2>
+                <h2 className="text-2xl font-bold text-gray-900">Session Raw Data</h2>
                 <button
                   onClick={() => setShowModal(false)}
                   className="text-gray-400 hover:text-gray-600"
