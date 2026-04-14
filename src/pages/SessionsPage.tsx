@@ -81,27 +81,55 @@ export function SessionsPage() {
       doc.text(`Time: ${new Date(session.start_time).toLocaleTimeString()}`, pageWidth - 25, 82, { align: 'right' });
       doc.text(`Duration: ${formatDuration(session.duration)}`, pageWidth - 25, 89, { align: 'right' });
 
-      // 3. AI Diagnosis Result
+      // 3. AI Diagnosis Result (Detailed Clinical Breakdown)
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.text('2. AI Diagnostic Summary', 20, 105);
       doc.line(20, 108, pageWidth - 20, 108);
 
       const prediction = session.predictions?.[0];
+      const categories = [
+        { id: 'NORMAL', name: 'Normal Sinus Rhythm' },
+        { id: 'MI', name: 'Myocardial Infarction' },
+        { id: 'STTC', name: 'ST/T Wave Changes' },
+        { id: 'CD', name: 'Conduction Disturbance' },
+        { id: 'HYP', name: 'Left Ventricular Hypertrophy' }
+      ];
+
+      let currentY = 118;
+      doc.setFontSize(10);
+      
+      categories.forEach((cat) => {
+        const isMatched = prediction?.predicted_class === cat.id;
+        
+        // Label
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(31, 41, 55);
+        doc.text(cat.name, 25, currentY);
+        
+        // Status
+        doc.setFont('helvetica', 'normal');
+        if (prediction) {
+          if (isMatched) {
+            doc.setTextColor(prediction.predicted_class === 'NORMAL' ? 22 : 220, prediction.predicted_class === 'NORMAL' ? 101 : 38, prediction.predicted_class === 'NORMAL' ? 52 : 38);
+            doc.text(prediction.predicted_class === 'NORMAL' ? 'NEGATIVE' : 'POSITIVE DETECTED', pageWidth - 25, currentY, { align: 'right' });
+          } else {
+            doc.setTextColor(107, 114, 128);
+            doc.text('NEGATIVE', pageWidth - 25, currentY, { align: 'right' });
+          }
+        } else {
+          doc.setTextColor(156, 163, 175);
+          doc.text('PENDING ANALYSIS', pageWidth - 25, currentY, { align: 'right' });
+        }
+        
+        currentY += 7;
+      });
+
       if (prediction) {
-        const isNormal = prediction.predicted_class === 'NORMAL';
-        doc.setFillColor(isNormal ? 240 : 254, isNormal ? 253 : 242, isNormal ? 244 : 242);
-        doc.rect(20, 115, pageWidth - 40, 30, 'F');
-        
-        doc.setTextColor(isNormal ? 21 : 185, isNormal ? 128 : 28, isNormal ? 61 : 28);
-        doc.setFontSize(18);
-        doc.text(prediction.predicted_class, pageWidth / 2, 130, { align: 'center' });
-        
-        doc.setFontSize(10);
-        doc.text(`CNN Model Confidence: ${prediction.confidence}%`, pageWidth / 2, 138, { align: 'center' });
-      } else {
-        doc.setFontSize(11);
-        doc.text('Pending Analysis / Placeholder State', 25, 120);
+        doc.setTextColor(31, 41, 55);
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(9);
+        doc.text(`* Final Interpretation based on ResNet-1D Classifier (${prediction.confidence}% confidence)`, 25, currentY + 3);
       }
 
       // 4. ECG Waveform Snapshot (6-Second Rhythm Strip)

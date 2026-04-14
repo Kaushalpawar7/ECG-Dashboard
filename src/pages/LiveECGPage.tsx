@@ -54,45 +54,38 @@ export function LiveECGPage() {
   const sessionDataRef = useRef<number[]>([]);
   const workerRef = useRef<Worker | null>(null);
   
+
   /**
-   * Realistic ECG Generator (P-QRS-T Model)
-   * Enhanced with physiological noise and hardware synchronization
+   * New 100Hz Realistic ECG Generator
    */
-  const generateECGPoint = (time: number, isHardwareValid: boolean, age: number = 30) => {
+  const generateRealisticECG = (time: number, seed: number, isHardwareValid: boolean) => {
     const baseline = 2000;
     const amplitude = 1000;
 
-    // If leads are removed or device goes offline during session, return a flat line with minimal jitter
     if (!isHardwareValid) {
-      return baseline + (Math.random() - 0.5) * 5; 
+      return baseline + (Math.random() - 0.5) * 10;
     }
 
-    // 1. Calculate target BPM based on age
-    const baseBPM = age < 15 ? 100 : age > 60 ? 70 : 75;
-    const heartRateVariation = Math.sin(time * 0.5) * 2;
-    const currentBPM = baseBPM + heartRateVariation;
+    // Variability based on seed
+    const hrScale = 0.9 + (seed % 20) / 100; // 0.9 to 1.1 scale
+    const period = 0.8 * hrScale; 
+    const t = (time % period) / period; // Phase [0, 1]
 
-    // 2. Frequency of heartbeat
-    const freq = currentBPM / 60;
-    const t = (time % (1 / freq)) * freq; // Phase [0, 1]
+    // P-wave
+    const p = 0.12 * Math.exp(-Math.pow(t - 0.15, 2) / 0.002);
+    // QRS complex (Much sharper for 100Hz)
+    const qrs = 1.0 * Math.exp(-Math.pow(t - 0.35, 2) / 0.0001) - 
+                0.15 * Math.exp(-Math.pow(t - 0.33, 2) / 0.0002) - 
+                0.25 * Math.exp(-Math.pow(t - 0.37, 2) / 0.0002);
+    // T-wave (Asymmetric)
+    const t_wave = 0.22 * Math.exp(-Math.pow(t - 0.65, 2) / 0.005);
 
-    // 3. Mathematical components of a single beat (P-QRS-T)
-    const pWave = 0.1 * Math.exp(-Math.pow((t - 0.1), 2) / 0.001);
-    const qrsComplex = 1.2 * Math.exp(-Math.pow((t - 0.15), 2) / 0.0001) -
-      0.2 * Math.exp(-Math.pow((t - 0.14), 2) / 0.00005) -
-      0.2 * Math.exp(-Math.pow((t - 0.16), 2) / 0.00005);
-    const tWave = 0.25 * Math.exp(-Math.pow((t - 0.35), 2) / 0.005);
+    // Baseline Wander (Multiple slow oscillators for realism)
+    const wander = 0.08 * Math.sin(time * 0.4) + 0.04 * Math.sin(time * 1.5);
+    // High frequency noise
+    const noise = (Math.random() - 0.5) * 0.03;
 
-    // 4. Advanced realism: Baseline wander (Respiration)
-    const wander = 0.15 * Math.sin(time * 0.8);
-    
-    // 5. Advanced realism: Muscle artifact and thermal noise
-    const noise = (Math.random() - 0.5) * 0.04;
-    
-    // 6. Power line interference (50Hz hum simulation)
-    const interference = 0.01 * Math.sin(time * 50 * 2 * Math.PI);
-
-    return baseline + (pWave + qrsComplex + tWave + wander + noise + interference) * amplitude;
+    return baseline + (p + qrs + t_wave + wander + noise) * amplitude;
   };
 
   useEffect(() => {
@@ -236,21 +229,27 @@ export function LiveECGPage() {
       setSessionResult(null);
       sessionDataRef.current = [];
 
-      // Start Realistic Simulation
-      let simTime = 0;
+      // Start Professional 100Hz Simulation
+      let simTime = Math.random() * 10; // Random starting phase
+      const sessionSeed = Math.floor(Math.random() * 1000);
+      
       intervalRef.current = setInterval(async () => {
-        // Condition check for live simulation: hardware must be valid
-        const simVal = generateECGPoint(simTime, (isConnected && leadsConnected), selectedPatient.age);
+        const isHardwareValid = (isConnected && leadsConnected);
+        const simVal = generateRealisticECG(simTime, sessionSeed, isHardwareValid);
         
-        // Save to full session history
         sessionDataRef.current.push(simVal);
 
         setEcgData((prev) => {
-          return [...prev, simVal].slice(-300);
+          return [...prev, simVal].slice(-500); // Show more points for 100Hz
         });
-        setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-300));
-        simTime += 0.05;
-      }, 50);
+        
+        // Show timestamps less frequently for 100Hz to save CPU
+        if (Math.floor(simTime * 100) % 5 === 0) {
+          setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-500));
+        }
+        
+        simTime += 0.01; // 10ms = 100Hz
+      }, 10);
 
       // Duration Timer
       durationIntervalRef.current = setInterval(() => {
@@ -290,13 +289,12 @@ export function LiveECGPage() {
         }));
 
         // Insert in batches to avoid Supabase/HTTP limits
-        const BATCH_SIZE = 400;
+        const BATCH_SIZE = 800;
         for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
           const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
           const { error: insertError } = await supabase.from('ecg_data').insert(batch);
           if (insertError) {
             console.error('Error inserting ECG batch:', insertError);
-            // Optionally log the error details if available
           }
         }
       }
@@ -468,16 +466,9 @@ export function LiveECGPage() {
             <div className="flex items-center justify-between mt-6">
               <div className="flex items-center space-x-8">
                 <div>
-                  <p className="text-sm text-gray-500">Target Heart Rate</p>
-                  <p className="text-2xl font-bold text-gray-900 tabular-nums">
-                    {isRecording ? (selectedPatient?.age && selectedPatient.age < 15 ? '100' : '75') : '--'}
-                    <span className="text-sm ml-1 font-normal text-gray-500">bpm</span>
-                  </p>
-                </div>
-                <div>
                   <p className="text-sm text-gray-500 flex items-center">
                     {isRecording && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse mr-2 shadow-[0_0_4px_rgba(239,68,68,0.8)]"></span>}
-                    Duration
+                    Session Duration
                   </p>
                   <p className="text-2xl font-bold text-gray-900 tabular-nums">{formatDuration(sessionDuration)}</p>
                 </div>
