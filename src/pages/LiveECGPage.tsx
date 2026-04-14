@@ -53,6 +53,17 @@ export function LiveECGPage() {
   // Store the entire session data for post-session analysis
   const sessionDataRef = useRef<number[]>([]);
   const workerRef = useRef<Worker | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const selectedPatientRef = useRef<Patient | null>(null);
+
+  // Keep IDs in Refs to avoid stale closures in Web Worker listener
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
+  useEffect(() => {
+    selectedPatientRef.current = selectedPatient;
+  }, [selectedPatient]);
   
 
   /**
@@ -129,14 +140,24 @@ export function LiveECGPage() {
   }, []);
 
   const savePredictionToDatabase = async (result: SessionResult) => {
-    if (!sessionId || !selectedPatient) return;
+    const sId = sessionIdRef.current;
+    const pId = selectedPatientRef.current?.id;
+
+    if (!sId || !pId) {
+      console.warn('Cannot save prediction: missing sessionId or patientId in Ref context');
+      return;
+    }
+
     try {
-      await supabase.from('predictions').insert([{
-        session_id: sessionId,
-        patient_id: selectedPatient.id,
+      const { error } = await supabase.from('predictions').insert([{
+        session_id: sId,
+        patient_id: pId,
         predicted_class: result.diagnosis,
         confidence: result.confidence
       }]);
+
+      if (error) throw error;
+      console.log('AI Prediction successfully persisted to Supabase');
     } catch (err) {
       console.error('Error saving prediction to DB:', err);
     }

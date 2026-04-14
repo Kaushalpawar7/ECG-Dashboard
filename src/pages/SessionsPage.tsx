@@ -41,7 +41,7 @@ export function SessionsPage() {
         .select('*')
         .eq('session_id', session.id)
         .order('timestamp', { ascending: true })
-        .limit(120); // ~6 seconds at 20Hz (50ms interval)
+        .limit(600); // 6 seconds at 100Hz
 
       if (error) throw error;
 
@@ -87,7 +87,14 @@ export function SessionsPage() {
       doc.text('2. AI Diagnostic Summary', 20, 105);
       doc.line(20, 108, pageWidth - 20, 108);
 
-      const prediction = session.predictions?.[0];
+      // Re-fetch latest prediction to ensure we don't show "Pending" if it just completed
+      const { data: freshPredictions } = await supabase
+        .from('predictions')
+        .select('*')
+        .eq('session_id', session.id)
+        .order('created_at', { ascending: false });
+
+      const prediction = freshPredictions?.[0] || session.predictions?.[0];
       const categories = [
         { id: 'NORMAL', name: 'Normal Sinus Rhythm' },
         { id: 'MI', name: 'Myocardial Infarction' },
