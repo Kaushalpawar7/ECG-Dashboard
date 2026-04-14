@@ -206,6 +206,16 @@ export class InferenceService {
     }
   }
 
+  async isModelCached(weightsUrl: string = BINARY_WEIGHTS_URL): Promise<boolean> {
+    try {
+      const cache = await caches.open('ecg-model-cache');
+      const cachedResponse = await cache.match(weightsUrl);
+      return !!cachedResponse;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async predict(data: number[]): Promise<PredictionResult> {
     if (!this.model) return { label: 'Initializing Model...', confidence: 0 };
 

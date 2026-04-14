@@ -16,6 +16,7 @@ import { Patient } from '../types/database';
 import { useAuth } from '../contexts/AuthContext';
 import { database } from '../lib/firebase';
 import { ref, onValue } from 'firebase/database';
+import { inferenceService } from '../services/InferenceService';
 
 // We define our local types for the batch evaluation results
 interface SessionResult {
@@ -96,6 +97,13 @@ export function LiveECGPage() {
 
   useEffect(() => {
     loadPatients();
+
+    // Check if model is already cached to avoid UI flicker
+    const checkCache = async () => {
+      const cached = await inferenceService.isModelCached();
+      if (cached) setModelDownloadProgress(100);
+    };
+    checkCache();
     
     // Initialize Web Worker
     workerRef.current = new Worker(new URL('../workers/inferenceWorker.ts', import.meta.url), { type: 'module' });
@@ -171,10 +179,10 @@ export function LiveECGPage() {
     );
 
     const watchdog = setInterval(() => {
-      if (Date.now() - lastUpdateRef.current > 12000) {
+      if (Date.now() - lastUpdateRef.current > 20000) {
         setIsConnected(false);
       }
-    }, 5000);
+    }, 10000);
 
     return () => {
       unsubscribeStatus();
@@ -272,20 +280,24 @@ export function LiveECGPage() {
 
       // Final Step: Persist all recorded points to the database for report generation
       // We do this BEFORE updating session status to ensure the data is there for anyone checking
-      if (sessionDataRef.current.length > 0 && sessionId) {
+      if (sessionDataRef.current.length > 0 && sessionId && selectedPatient) {
         const pointsToInsert = sessionDataRef.current.map((val, idx) => ({
           session_id: sessionId,
+          patient_id: selectedPatient.id,
           ecg_value: Math.round(val),
           // We calculate the relative timestamp (50ms intervals)
           timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 50).toISOString()
         }));
 
         // Insert in batches to avoid Supabase/HTTP limits
-        const BATCH_SIZE = 500;
+        const BATCH_SIZE = 400;
         for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
           const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
           const { error: insertError } = await supabase.from('ecg_data').insert(batch);
-          if (insertError) console.error('Error inserting ECG batch:', insertError);
+          if (insertError) {
+            console.error('Error inserting ECG batch:', insertError);
+            // Optionally log the error details if available
+          }
         }
       }
 
