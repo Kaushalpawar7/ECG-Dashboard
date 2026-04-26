@@ -31,23 +31,36 @@ self.onmessage = async (e: MessageEvent) => {
 
       let chunkCount = 0;
 
-      // Optimization: If the dataset is huge, increase the stride to avoid over-sampling
-      const baseStride = Math.floor(CHUNK_SIZE / 2); // 500ms overlap
-      const stride = data.length > 30000 ? CHUNK_SIZE : baseStride; // 0% overlap for sessions > 5 mins
-      
-      // Limit to max 200 checks for ultra-long sessions (sanity cap)
-      const maxChecks = 200;
-      const step = data.length > 200000 ? Math.floor(data.length / maxChecks) : stride;
-
       const chunks: number[][] = [];
-      for (let i = 0; i <= data.length - CHUNK_SIZE; i += step) {
-        const chunk = data.slice(i, i + CHUNK_SIZE);
+      const HW_WINDOW = 100; // 2 seconds at 50Hz
+      
+      const processingStep = data.length > 20000 
+        ? HW_WINDOW 
+        : Math.floor(HW_WINDOW / 2);
+
+      for (let i = 0; i <= data.length - HW_WINDOW; i += processingStep) {
+        const rawChunk = data.slice(i, i + HW_WINDOW);
         
-        // Z-SCORE NORMALIZATION (Vital for clinical accuracy)
-        const mean = chunk.reduce((a, b) => a + b, 0) / CHUNK_SIZE;
-        const variance = chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / CHUNK_SIZE;
+        // 10x LINEAR INTERPOLATION (50Hz -> 500Hz)
+        const upsampled = new Float32Array(CHUNK_SIZE);
+        for (let j = 0; j < CHUNK_SIZE; j++) {
+           const index = j / 10; 
+           const low = Math.floor(index);
+           const high = Math.ceil(index);
+           const weight = index - low;
+           
+           if (high >= rawChunk.length) {
+              upsampled[j] = rawChunk[rawChunk.length - 1];
+           } else {
+              upsampled[j] = rawChunk[low] * (1 - weight) + rawChunk[high] * weight;
+           }
+        }
+        
+        // Z-SCORE NORMALIZATION on upsampled data
+        const mean = upsampled.reduce((a, b) => a + b, 0) / CHUNK_SIZE;
+        const variance = upsampled.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / CHUNK_SIZE;
         const std = Math.sqrt(variance) || 1.0; 
-        const normalized = chunk.map(v => (v - mean) / std);
+        const normalized = Array.from(upsampled).map(v => (v - mean) / std);
         
         chunks.push(normalized);
       }
