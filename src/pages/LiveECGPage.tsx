@@ -160,7 +160,9 @@ export function LiveECGPage() {
    useEffect(() => {
     if (!isRecording) return;
     const baselineWindow: number[] = [];
-    const WINDOW_SIZE = 50; 
+    const peakWindow: number[] = [];
+    const WINDOW_SIZE = 250; 
+    let lastRaw = 1850;
     let emaVal = 1850;
 
     const clock = setInterval(() => {
@@ -172,14 +174,26 @@ export function LiveECGPage() {
          if (rawVal < 10) return;
 
          baselineWindow.push(rawVal);
+         peakWindow.push(rawVal);
          if (baselineWindow.length > WINDOW_SIZE) baselineWindow.shift();
+         if (peakWindow.length > 100) peakWindow.shift(); 
+         
          const currentMean = baselineWindow.reduce((a, b) => a + b, 0) / baselineWindow.length;
          
-         const centered = (rawVal - currentMean) + 1850;
-         emaVal = (centered * 0.7) + (emaVal * 0.3);
+         const pMin = Math.min(...peakWindow);
+         const pMax = Math.max(...peakWindow);
+         const currentRange = Math.max(10, pMax - pMin);
+         const targetRange = 180; 
+         const gain = targetRange / currentRange;
+
+         const derivative = (rawVal - lastRaw) * 0.4; 
+         lastRaw = rawVal;
+         
+         const amplified = ((rawVal - currentMean) * gain) + 1850 + derivative;
+         emaVal = (amplified * 0.85) + (emaVal * 0.15);
          
          sessionDataRef.current.push(rawVal);
-         nextVal = Math.min(2250, Math.max(1650, emaVal));
+         nextVal = Math.min(2350, Math.max(1550, emaVal));
       } else {
          sessionDataRef.current.push(nextVal);
       }
