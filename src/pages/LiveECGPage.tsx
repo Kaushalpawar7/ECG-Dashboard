@@ -43,6 +43,7 @@ export function LiveECGPage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [dataMode, setDataMode] = useState<'simulation' | 'hardware'>('simulation');
 
   // Refs for timers and connections
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -55,7 +56,6 @@ export function LiveECGPage() {
   const workerRef = useRef<Worker | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const selectedPatientRef = useRef<Patient | null>(null);
-  const maxSeenTRef = useRef<number>(-1);
   const slotValuesRef = useRef<Record<string, number>>({});
   const initialDataCapturedRef = useRef<boolean>(false);
 
@@ -144,13 +144,49 @@ export function LiveECGPage() {
     // Ask worker to init the TFJS model in background
     workerRef.current.postMessage({ type: 'INIT' });
 
+    // Handle Hardware Data (Slots)
+    const slotDataRefs = [
+      ref(database, '/live/ecg/slot1/data'),
+      ref(database, '/live/ecg/slot2/data'),
+      ref(database, '/live/ecg/slot3/data'),
+    ];
+
+    const slotDataUnsubscribes = slotDataRefs.map((dataRef, _index) => 
+      onValue(dataRef, (snapshot) => {
+        if (dataMode === 'hardware' && isRecording && snapshot.exists()) {
+           const newData = snapshot.val();
+           // Convert Firebase data (likely a comma-separated string or array) to numbers
+           let points: number[] = [];
+           if (typeof newData === 'string') {
+              points = newData.split(',').map(v => parseInt(v.trim())).filter(v => !isNaN(v));
+           } else if (Array.isArray(newData)) {
+              points = newData.map(v => Number(v));
+           } else if (typeof newData === 'object') {
+              // Handle object-indexed data {0: val, 1: val}
+              points = Object.values(newData).map(v => Number(v));
+           }
+
+           if (points.length > 0) {
+              setEcgData(prev => [...prev, ...points].slice(-600));
+              setTimestamps(prev => {
+                const now = new Date().toLocaleTimeString();
+                const tsBatch = new Array(points.length).fill(now);
+                return [...prev, ...tsBatch].slice(-600);
+              });
+              sessionDataRef.current = [...sessionDataRef.current, ...points];
+           }
+        }
+      })
+    );
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
       if (firebaseListenerRef.current) firebaseListenerRef.current();
       if (workerRef.current) workerRef.current.terminate();
+      slotDataUnsubscribes.forEach(unsub => unsub());
     };
-  }, []);
+  }, [dataMode, isRecording]); // Re-attach when mode or recording status changes
 
   const savePredictionToDatabase = async (result: SessionResult) => {
     const sId = sessionIdRef.current;
@@ -285,27 +321,28 @@ export function LiveECGPage() {
       setSessionResult(null);
       sessionDataRef.current = [];
 
-      // Start Professional 100Hz Simulation
-      let simTime = Math.random() * 10; // Random starting phase
-      const sessionSeed = Math.floor(Math.random() * 1000);
-      
-      intervalRef.current = setInterval(async () => {
-        const isHardwareValid = (isConnected && leadsConnected);
-        const simVal = generateRealisticECG(simTime, sessionSeed, isHardwareValid);
+      // Only start the simulator if we are in Simulation Mode
+      if (dataMode === 'simulation') {
+        let simTime = Math.random() * 10; 
+        const sessionSeed = Math.floor(Math.random() * 1000);
         
-        sessionDataRef.current.push(simVal);
+        intervalRef.current = setInterval(async () => {
+          const isHardwareValid = (isConnected && leadsConnected);
+          const simVal = generateRealisticECG(simTime, sessionSeed, isHardwareValid);
+          
+          sessionDataRef.current.push(simVal);
 
-        setEcgData((prev) => {
-          return [...prev, simVal].slice(-400); // 400 pts at 50Hz = 8s window
-        });
-        
-        // Update timestamps every 5 data points (100ms) to save UI thrashing
-        if (Math.floor(simTime * 50) % 5 === 0) {
-          setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-400));
-        }
-        
-        simTime += 0.02; // 20ms = 50Hz
-      }, 20);
+          setEcgData((prev) => {
+            return [...prev, simVal].slice(-400); 
+          });
+          
+          if (Math.floor(simTime * 50) % 5 === 0) {
+            setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-400));
+          }
+          
+          simTime += 0.02; 
+        }, 20);
+      }
 
       // Duration Timer
       durationIntervalRef.current = setInterval(() => {
@@ -439,7 +476,25 @@ export function LiveECGPage() {
             <div className="flex items-center justify-between mb-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900">Live ECG Monitoring</h3>
-                <p className="text-sm text-gray-500">Realistic Cardiac Signal Simulation</p>
+                <div className="flex items-center space-x-4 mt-1">
+                   <p className="text-sm text-gray-500">Source:</p>
+                   <div className="flex bg-gray-100 p-1 rounded-lg">
+                      <button 
+                        onClick={() => !isRecording && setDataMode('simulation')}
+                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${dataMode === 'simulation' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        disabled={isRecording}
+                      >
+                        Simulation
+                      </button>
+                      <button 
+                        onClick={() => !isRecording && setDataMode('hardware')}
+                        className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${dataMode === 'hardware' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+                        disabled={isRecording}
+                      >
+                        Live Hardware
+                      </button>
+                   </div>
+                </div>
               </div>
               <div className="flex flex-col items-end gap-2">
                 <div className="flex items-center space-x-2">
