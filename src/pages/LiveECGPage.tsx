@@ -55,6 +55,8 @@ export function LiveECGPage() {
   const workerRef = useRef<Worker | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const selectedPatientRef = useRef<Patient | null>(null);
+  const lastSeenValueRef = useRef<number>(-1);
+  const hasSeenFirstUpdateRef = useRef<boolean>(false);
 
   // Keep IDs in Refs to avoid stale closures in Web Worker listener
   useEffect(() => {
@@ -186,17 +188,28 @@ export function LiveECGPage() {
     const unsubscribes = slotRefs.map((slotRef) =>
       onValue(slotRef, (snapshot) => {
         if (snapshot.exists()) {
-          lastUpdateRef.current = Date.now();
-          setIsConnected(true);
+          const newValue = snapshot.val();
+          
+          // Only mark as Online if the hardware counter 't' has actually increased
+          // This prevents stale/cached Firebase data from showing as "Online" on load
+          if (!hasSeenFirstUpdateRef.current) {
+             lastSeenValueRef.current = newValue;
+             hasSeenFirstUpdateRef.current = true;
+          } else if (newValue > lastSeenValueRef.current) {
+             lastUpdateRef.current = Date.now();
+             lastSeenValueRef.current = newValue;
+             setIsConnected(true);
+          }
         }
       })
     );
 
+    // Watchdog: If no updates seen for 5 seconds, mark offline
     const watchdog = setInterval(() => {
-      if (Date.now() - lastUpdateRef.current > 20000) {
+      if (Date.now() - lastUpdateRef.current > 5000) {
         setIsConnected(false);
       }
-    }, 10000);
+    }, 2000);
 
     return () => {
       unsubscribeStatus();
@@ -309,13 +322,19 @@ export function LiveECGPage() {
           timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 50).toISOString()
         }));
 
-        // Insert in batches to avoid Supabase/HTTP limits
-        const BATCH_SIZE = 800;
+        // Insert in batches with explicit error logging for debugging
+        const BATCH_SIZE = 500;
         for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
           const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
           const { error: insertError } = await supabase.from('ecg_data').insert(batch);
+          
           if (insertError) {
-            console.error('Error inserting ECG batch:', insertError);
+            console.error('Supabase 400 Debug:', {
+               message: insertError.message,
+               details: insertError.details,
+               hint: insertError.hint,
+               batch_sample: batch[0]
+            });
           }
         }
       }

@@ -55,6 +55,16 @@ export class InferenceService {
     };
   }
 
+  async isModelCached(weightsUrl: string = BINARY_WEIGHTS_URL): Promise<boolean> {
+    try {
+      const cache = await caches.open('ecg-model-cache');
+      const cachedResponse = await cache.match(weightsUrl);
+      return !!cachedResponse;
+    } catch {
+      return false;
+    }
+  }
+
   async loadModelFromWeights(
     weightsUrl: string = BINARY_WEIGHTS_URL,
     metaUrl: string = METADATA_URL,
@@ -203,16 +213,6 @@ export class InferenceService {
       console.log('TFJS ResNet1D Architecture Created & Ready');
     } catch (error) {
       console.error('Error initializing TFJS model:', error);
-    }
-  }
-
-  async isModelCached(weightsUrl: string = BINARY_WEIGHTS_URL): Promise<boolean> {
-    try {
-      const cache = await caches.open('ecg-model-cache');
-      const cachedResponse = await cache.match(weightsUrl);
-      return !!cachedResponse;
-    } catch (error) {
-      return false;
     }
   }
 
