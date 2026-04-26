@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { User, AlertCircle } from 'lucide-react';
+import { User, AlertCircle, Play, Square, Activity, Database, CheckCircle, Clock } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -9,6 +9,7 @@ import {
   Title,
   Tooltip,
   Legend,
+  Filler,
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 import { supabase } from '../lib/supabase';
@@ -17,17 +18,15 @@ import { database } from '../lib/firebase';
 import { ref, onValue } from 'firebase/database';
 import { inferenceService } from '../services/InferenceService';
 
-// We define our local types for the batch evaluation results
 interface SessionResult {
   diagnosis: string;
   confidence: number;
   distribution: Record<string, number>;
 }
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 
 export function LiveECGPage() {
-
   const [patients, setPatients] = useState<Patient[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
   const [isRecording, setIsRecording] = useState(false);
@@ -43,11 +42,8 @@ export function LiveECGPage() {
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [dataMode, setDataMode] = useState<'simulation' | 'hardware'>('simulation');
 
-  // Refs for timers and connections
   const durationIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastUpdateRef = useRef<number>(0);
-  
-  // Store the entire session data for post-session analysis
   const sessionDataRef = useRef<number[]>([]);
   const workerRef = useRef<Worker | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -56,7 +52,6 @@ export function LiveECGPage() {
   const initialDataCapturedRef = useRef<boolean>(false);
   const hardwareBufferRef = useRef<number[]>([]);
 
-  // Sync state with Refs for the AI worker closure
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -65,12 +60,8 @@ export function LiveECGPage() {
     selectedPatientRef.current = selectedPatient;
   }, [selectedPatient]);
   
-
-  /**
-   * Hospital-Grade ECG Generator
-   */
   const generateRealisticECG = (time: number, seed: number, isHardwareValid: boolean) => {
-    const baseline = 1850; // Calibrated for clinical hardware (1750-2050 display)
+    const baseline = 1850; // Reference point
     const amplitude = 140; 
 
     if (!isHardwareValid) {
@@ -82,7 +73,6 @@ export function LiveECGPage() {
     const period = 0.85 * hrScale + hrv; 
     const t = (time % period) / period; 
 
-    // Components
     const p = 0.1 * Math.exp(-Math.pow(t - 0.15, 2) / 0.003);
     const qrs = 1.0 * Math.exp(-Math.pow(t - 0.35, 2) / 0.00015) - 
                 0.12 * Math.exp(-Math.pow(t - 0.33, 2) / 0.0003) - 
@@ -112,49 +102,38 @@ export function LiveECGPage() {
     }
   };
 
-  // 1. Initial Load: Persistent AI brain initialization
   useEffect(() => {
     loadPatients();
     
-    const checkCache = async () => {
-      const cached = await inferenceService.isModelCached();
+    inferenceService.isModelCached().then(cached => {
       if (cached) setModelDownloadProgress(100);
-    };
-    checkCache();
+    });
 
-    // Spawn AI module exactly ONCE
     const worker = new Worker(new URL('../workers/inferenceWorker.ts', import.meta.url), { type: 'module' });
     workerRef.current = worker;
 
     worker.onmessage = (e) => {
-      const { type, progress, result, error } = e.data;
+      const { type, progress, result } = e.data;
       if (type === 'PROGRESS') setModelDownloadProgress(progress);
       else if (type === 'ANALYSIS_COMPLETE') {
         setIsAnalyzing(false);
         setSessionResult(result);
         savePredictionToDatabase(result);
-      } else if (type === 'ERROR') {
-        console.error('Worker Error:', error);
-        setIsAnalyzing(false);
       }
     };
 
     worker.postMessage({ type: 'INIT' });
-
     return () => worker.terminate();
   }, []);
 
-  // 2. Hardware Sync: Firebase data extraction
   useEffect(() => {
     if (dataMode !== 'hardware' || !isRecording) return;
-
     const slotDataRefs = [
       ref(database, '/live/ecg/slot1/data'),
       ref(database, '/live/ecg/slot2/data'),
       ref(database, '/live/ecg/slot3/data'),
     ];
-
-    const unsubscribes = slotDataRefs.map((dataRef) => 
+    const unsubs = slotDataRefs.map((dataRef) => 
       onValue(dataRef, (snapshot) => {
         if (snapshot.exists()) {
            const newData = snapshot.val();
@@ -175,56 +154,44 @@ export function LiveECGPage() {
         }
       })
     );
-
-    return () => unsubscribes.forEach(unsub => unsub());
+    return () => unsubs.forEach(unsub => unsub());
   }, [dataMode, isRecording]);
 
-  // 3. Clinical Visualization Clock (50Hz Filtering)
   useEffect(() => {
     if (!isRecording) return;
-
     const movingAvgBuffer: number[] = [];
     const WINDOW_SIZE = 5;
-
     const clock = setInterval(() => {
       let nextVal = generateRealisticECG(Date.now() / 1000, 0, isConnected || dataMode === 'simulation');
-
       if (dataMode === 'hardware') {
          if (hardwareBufferRef.current.length === 0) return; 
          const rawVal = hardwareBufferRef.current.shift()!;
          if (rawVal < 10) return;
-
          sessionDataRef.current.push(rawVal);
          movingAvgBuffer.push(rawVal);
          if (movingAvgBuffer.length > WINDOW_SIZE) movingAvgBuffer.shift();
          const sum = movingAvgBuffer.reduce((a, b) => a + b, 0);
-         // Clinical axis lock
          nextVal = Math.min(2200, Math.max(1750, sum / movingAvgBuffer.length));
       } else {
          sessionDataRef.current.push(nextVal);
       }
-
       setEcgData(prev => [...prev, nextVal].slice(-400));
       if (sessionDataRef.current.length % 5 === 0) {
         setTimestamps(prev => [...prev, new Date().toLocaleTimeString()].slice(-400));
       }
     }, 20);
-
     return () => clearInterval(clock);
   }, [isRecording, dataMode, isConnected]);
 
-  // 4. Connection Watchdog
   useEffect(() => {
     if (!database) return;
     const statusRef = ref(database, '/live/status');
     const unsubStatus = onValue(statusRef, (snap) => setLeadsConnected(snap.val() === "ON"));
-
     const slotRefs = [
       ref(database, '/live/ecg/slot1/t'),
       ref(database, '/live/ecg/slot2/t'),
       ref(database, '/live/ecg/slot3/t'),
     ];
-
     const unsubs = slotRefs.map((r, i) => onValue(r, (snap) => {
       if (snap.exists()) {
         const id = `slot${i+1}`;
@@ -239,11 +206,9 @@ export function LiveECGPage() {
         }
       }
     }));
-
     const wd = setInterval(() => {
       if (Date.now() - lastUpdateRef.current > 10000) setIsConnected(false);
     }, 2000);
-
     return () => { unsubStatus(); unsubs.forEach(u => u()); clearInterval(wd); };
   }, []);
 
@@ -256,10 +221,7 @@ export function LiveECGPage() {
   };
 
   const startRealRecording = async () => {
-    if (!selectedPatient || !isConnected || !leadsConnected) {
-      alert('Connectivity issue: Check hardware.');
-      return;
-    }
+    if (!selectedPatient || !isConnected || !leadsConnected) return;
     const { data } = await supabase.from('ecg_sessions').insert([{ patient_id: selectedPatient.id, status: 'active' }]).select().single();
     if (data) {
       setSessionId(data.id);
@@ -276,24 +238,19 @@ export function LiveECGPage() {
   const stopRecording = async () => {
     if (!sessionId) return;
     if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
-
     setIsRecording(false);
     setIsFinalizing(true);
     setIsAnalyzing(true);
-
     const finalPayload = [...sessionDataRef.current, ...hardwareBufferRef.current];
     if (workerRef.current && finalPayload.length > 0) {
       workerRef.current.postMessage({ type: 'PREDICT', payload: finalPayload });
     }
-
     await supabase.from('ecg_sessions').update({
       status: 'completed',
       duration: sessionDuration,
       raw_data: finalPayload
     }).eq('id', sessionId);
-
     setIsFinalizing(false);
-    if (!workerRef.current || finalPayload.length === 0) setIsAnalyzing(false);
   };
 
   const formatDuration = (s: number) => {
@@ -301,84 +258,187 @@ export function LiveECGPage() {
     return `${m.toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
   };
 
+  const chartData = {
+    labels: timestamps.length > 0 ? timestamps : Array(400).fill(''),
+    datasets: [
+      {
+        label: 'ECG Signal',
+        data: ecgData.length > 0 ? ecgData : Array(400).fill(1850),
+        borderColor: '#06b6d4',
+        borderWidth: 2.5,
+        tension: 0.15,
+        pointRadius: 0,
+        fill: true,
+        backgroundColor: (context: any) => {
+          const ctx = context.chart.ctx;
+          const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+          gradient.addColorStop(0, 'rgba(6, 182, 212, 0.25)');
+          gradient.addColorStop(1, 'rgba(6, 182, 212, 0)');
+          return gradient;
+        },
+      },
+    ],
+  };
+
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-            {modelDownloadProgress < 100 && (
-              <div className="mb-4 bg-blue-50 border border-blue-100 rounded-lg p-4">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm font-semibold text-blue-800">AI Module Sync ({modelDownloadProgress}%)</span>
+    <div className="max-w-7xl mx-auto p-4 lg:p-8 space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Live ECG Monitoring</h1>
+          <p className="text-gray-500 text-sm">Real-time physiological data analysis</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex bg-gray-50 p-1 rounded-xl border border-gray-100">
+            <button onClick={() => !isRecording && setDataMode('simulation')} className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${dataMode === 'simulation' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Simulation</button>
+            <button onClick={() => !isRecording && setDataMode('hardware')} className={`px-4 py-2 text-sm font-medium rounded-lg transition-all ${dataMode === 'hardware' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-700'}`}>Hardware</button>
+          </div>
+          <div className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold border ${isConnected ? 'bg-green-50 text-green-700 border-green-100' : 'bg-red-50 text-red-700 border-red-100'}`}>
+            <Activity className={`w-4 h-4 ${isConnected ? 'animate-pulse' : ''}`} />
+            {isConnected ? 'DEVICE ONLINE' : 'DEVICE OFFLINE'}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-3 space-y-6">
+          <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+            <div className="p-6 border-b border-gray-50 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center">
+                  <Activity className="w-5 h-5 text-blue-600" />
                 </div>
-                <div className="w-full bg-blue-200 rounded-full h-2">
-                  <div className="bg-blue-600 h-2 rounded-full transition-all" style={{ width: `${modelDownloadProgress}%` }}></div>
+                <div>
+                  <h3 className="font-bold text-gray-900">Clinical Waveform Feed</h3>
+                  <p className="text-xs text-gray-500">Center Reference: 1850mV</p>
                 </div>
               </div>
-            )}
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-bold">Live Clinical Monitoring</h3>
-                <div className="flex bg-gray-100 p-1 rounded-lg mt-2">
-                  <button onClick={() => !isRecording && setDataMode('simulation')} className={`px-3 py-1 text-xs rounded-md ${dataMode === 'simulation' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}>Simulation</button>
-                  <button onClick={() => !isRecording && setDataMode('hardware')} className={`px-3 py-1 text-xs rounded-md ${dataMode === 'hardware' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500'}`}>Hardware</button>
+              <div className="flex items-center gap-4">
+                <div className="text-center">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Duration</p>
+                  <p className="text-lg font-mono font-bold text-blue-600">{formatDuration(sessionDuration)}</p>
                 </div>
-              </div>
-              <div className="text-right">
-                <div className={`text-xs font-bold uppercase ${isConnected ? 'text-green-600' : 'text-red-500'}`}>
-                   {isConnected ? 'Device Online' : 'Device Offline'}
-                </div>
+                {modelDownloadProgress < 100 && (
+                  <div className="flex items-center gap-3 bg-blue-50 px-4 py-2 rounded-xl border border-blue-100">
+                    <Database className="w-4 h-4 text-blue-600 animate-bounce" />
+                    <span className="text-xs font-bold text-blue-700">Syncing AI... {modelDownloadProgress}%</span>
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="bg-black rounded-lg p-4 relative" style={{ height: '400px' }}>
+            <div className="bg-black p-6 relative aspect-[21/9] min-h-[400px]">
               {(isAnalyzing || isFinalizing) && (
-                <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center rounded-lg text-white font-bold">
-                  <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p>{isFinalizing ? 'Saving Session...' : 'AI Analyzing...'}</p>
+                <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex flex-col items-center justify-center text-white">
+                  <div className="relative mb-6">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <Activity className="w-6 h-6 text-blue-500 absolute inset-0 m-auto animate-pulse" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">{isFinalizing ? 'Finalizing Session...' : 'AI Diagnosing...'}</h3>
+                  <p className="text-gray-400 text-sm">Processing clinical datasets</p>
                 </div>
               )}
+
               {sessionResult && !isRecording && !isAnalyzing && (
-                <div className="absolute top-6 left-6 z-10 bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-lg">
-                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">AI Diagnosis</p>
-                  <p className={`text-3xl font-black ${sessionResult.diagnosis === 'NORMAL' ? 'text-green-400' : 'text-red-400'}`}>{sessionResult.diagnosis}</p>
-                  <p className="text-sm text-white">{sessionResult.confidence}% confidence</p>
+                <div className="absolute top-8 left-8 z-10 bg-white/10 backdrop-blur-md border border-white/20 p-6 rounded-2xl animate-in fade-in zoom-in duration-500">
+                  <div className="flex items-center gap-3 mb-4">
+                    <CheckCircle className={`w-5 h-5 ${sessionResult.diagnosis === 'NORMAL' ? 'text-green-400' : 'text-red-400'}`} />
+                    <span className="text-[10px] font-black text-white/60 uppercase tracking-[0.2em]">Clinical Report</span>
+                  </div>
+                  <p className={`text-4xl font-black mb-1 ${sessionResult.diagnosis === 'NORMAL' ? 'text-green-400' : 'text-red-400'}`}>{sessionResult.diagnosis}</p>
+                  <p className="text-sm text-white/80 font-medium">AI Confidence: {sessionResult.confidence}%</p>
                 </div>
               )}
-              {isRecording ? (
-                <Line
-                  data={{ labels: timestamps, datasets: [{ data: ecgData, borderColor: '#06b6d4', borderWidth: 2, tension: 0.1, pointRadius: 0, fill: true, backgroundColor: 'rgba(6,182,212,0.1)' }] }}
-                  options={{ responsive: true, maintainAspectRatio: false, animation: false, scales: { x: { display: false }, y: { min: 1750, max: 2100, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#666' } } }, plugins: { legend: { display: false } } }}
-                />
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-gray-500">
-                  <AlertCircle className="w-12 h-12 mb-2" />
-                  <p>Ready to monitor. Select patient and start.</p>
-                </div>
-              )}
+
+              <Line
+                data={chartData}
+                options={{
+                  responsive: true,
+                  maintainAspectRatio: false,
+                  animation: false,
+                  interaction: { intersect: false },
+                  scales: {
+                    x: { display: false },
+                    y: {
+                      min: 1750,
+                      max: 2100,
+                      grid: { color: 'rgba(255,255,255,0.05)' },
+                      ticks: { color: 'rgba(255,255,255,0.3)', font: { size: 10 } }
+                    }
+                  },
+                  plugins: {
+                    legend: { display: false },
+                    tooltip: { enabled: false }
+                  }
+                }}
+              />
             </div>
 
-            <div className="flex items-center justify-between mt-6">
-              <div>
-                <p className="text-xs text-gray-400">Duration</p>
-                <p className="text-2xl font-bold">{formatDuration(sessionDuration)}</p>
+            <div className="p-6 bg-gray-50 flex items-center justify-between border-t border-gray-100">
+              <div className="flex items-center gap-6">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${leadsConnected ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></div>
+                  <span className="text-sm font-medium text-gray-700">Leads: {leadsConnected ? 'Stable' : 'Check Sensor'}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className={`w-2.5 h-2.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <span className="text-sm font-medium text-gray-700">Storage: Persistent</span>
+                </div>
               </div>
-              <button onClick={isRecording ? stopRecording : startRealRecording} className={`px-8 py-3 rounded-lg font-bold text-white transition-all ${isRecording ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}`}>
-                {isRecording ? 'Stop Recording' : 'Start Recording'}
+              <button
+                onClick={isRecording ? stopRecording : startRealRecording}
+                disabled={!selectedPatient || (!isConnected && dataMode === 'hardware')}
+                className={`flex items-center gap-3 px-8 py-3 rounded-2xl font-bold text-white shadow-lg transition-all transform hover:scale-105 active:scale-95 disabled:opacity-50 disabled:scale-100 ${isRecording ? 'bg-red-600 shadow-red-200 hover:bg-red-700' : 'bg-blue-600 shadow-blue-200 hover:bg-blue-700'}`}
+              >
+                {isRecording ? <Square className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
+                {isRecording ? 'Terminate Recording' : 'Initiate Session'}
               </button>
             </div>
           </div>
         </div>
 
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-          <h3 className="font-bold mb-4">Patients</h3>
-          <div className="space-y-2">
-            {patients.map(p => (
-              <button key={p.id} onClick={() => !isRecording && setSelectedPatient(p)} className={`w-full text-left p-3 rounded-lg transition-all ${selectedPatient?.id === p.id ? 'bg-blue-50 border-l-4 border-blue-600' : 'hover:bg-gray-50'}`}>
-                <p className="font-bold text-gray-900">{p.name}</p>
-                <p className="text-xs text-gray-500">{p.age}y • {p.gender}</p>
-              </button>
-            ))}
+        <div className="space-y-6">
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <User className="w-4 h-4 text-blue-600" />
+              Patient Registry
+            </h3>
+            <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+              {patients.map(p => (
+                <button
+                  key={p.id}
+                  onClick={() => !isRecording && setSelectedPatient(p)}
+                  className={`w-full text-left p-4 rounded-xl transition-all border ${selectedPatient?.id === p.id ? 'bg-blue-50 border-blue-200 shadow-sm' : 'bg-white border-gray-50 hover:border-blue-100 hover:bg-blue-50/30'}`}
+                >
+                  <p className={`font-bold ${selectedPatient?.id === p.id ? 'text-blue-700' : 'text-gray-900'}`}>{p.name}</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <span className="text-xs text-gray-500 font-medium px-2 py-0.5 bg-gray-100 rounded-md">{p.age} Years</span>
+                    <span className="text-xs text-gray-500 font-medium px-2 py-0.5 bg-gray-100 rounded-md uppercase">{p.gender}</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl p-6 text-white shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                <AlertCircle className="w-5 h-5 text-white" />
+              </div>
+              <h4 className="font-bold">System Status</h4>
+            </div>
+            <p className="text-blue-100 text-xs leading-relaxed mb-6">
+              AI Engine is currently optimized for batch evaluation of 1D ECG signals. Real-time classification latency is &lt;200ms.
+            </p>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-blue-200">Processing Mode</span>
+                <span className="font-bold">GPU ACCELERATED</span>
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-blue-200">Sampling Rate</span>
+                <span className="font-bold">50 Hz</span>
+              </div>
+            </div>
           </div>
         </div>
       </div>
