@@ -213,9 +213,9 @@ export function LiveECGPage() {
       })
     );
 
-    // Watchdog: 8 seconds timeout (increased from 5s) to prevent flickering during 2s hardware cycles
+    // Watchdog: 10 seconds timeout (increased from 8s) to handle slower hardware burst cycles
     const watchdog = setInterval(() => {
-      if (Date.now() - lastUpdateRef.current > 8000) {
+      if (Date.now() - lastUpdateRef.current > 10000) {
         setIsConnected(false);
       }
     }, 2000);
