@@ -73,33 +73,43 @@ export function LiveECGPage() {
    * New 100Hz Realistic ECG Generator
    */
   const generateRealisticECG = (time: number, seed: number, isHardwareValid: boolean) => {
-    const baseline = 2000;
-    const amplitude = 1000;
+    const baseline = 1900; // Centered to match user hardware (1800-2000)
+    const amplitude = 150; 
 
     if (!isHardwareValid) {
-      return baseline + (Math.random() - 0.5) * 10;
+      return baseline + (Math.random() - 0.5) * 5;
     }
 
-    // Variability based on seed
-    const hrScale = 0.9 + (seed % 20) / 100; // 0.9 to 1.1 scale
-    const period = 0.8 * hrScale; 
-    const t = (time % period) / period; // Phase [0, 1]
+    // 1. Pathological Variability (Seed based Heart Rate)
+    const hrScale = 0.95 + (seed % 10) / 100; 
+    // Add subtle Heart Rate Variability (HRV)
+    const hrv = 0.02 * Math.sin(time * 0.1);
+    const period = 0.85 * hrScale + hrv; 
+    const t = (time % period) / period; 
 
-    // P-wave
-    const p = 0.12 * Math.exp(-Math.pow(t - 0.15, 2) / 0.002);
-    // QRS complex (Much sharper for 100Hz)
-    const qrs = 1.0 * Math.exp(-Math.pow(t - 0.35, 2) / 0.0001) - 
-                0.15 * Math.exp(-Math.pow(t - 0.33, 2) / 0.0002) - 
-                0.25 * Math.exp(-Math.pow(t - 0.37, 2) / 0.0002);
-    // T-wave (Asymmetric)
-    const t_wave = 0.22 * Math.exp(-Math.pow(t - 0.65, 2) / 0.005);
+    // 2. Biological Components (Smoothed for 50Hz)
+    // P-wave (Atrial depolarization)
+    const p = 0.1 * Math.exp(-Math.pow(t - 0.15, 2) / 0.003);
+    
+    // QRS Complex (Ventricular depolarization)
+    const qrs = 1.0 * Math.exp(-Math.pow(t - 0.35, 2) / 0.00015) - 
+                0.12 * Math.exp(-Math.pow(t - 0.33, 2) / 0.0003) - 
+                0.22 * Math.exp(-Math.pow(t - 0.37, 2) / 0.0003);
+                
+    // T-wave (Ventricular repolarization)
+    const t_wave = 0.2 * Math.exp(-Math.pow(t - 0.65, 2) / 0.006);
 
-    // Baseline Wander (Multiple slow oscillators for realism)
-    const wander = 0.08 * Math.sin(time * 0.4) + 0.04 * Math.sin(time * 1.5);
-    // High frequency noise
-    const noise = (Math.random() - 0.5) * 0.03;
+    // 3. Multi-Layer Noise & Artifacts
+    // Respiration Drift (Patient breathing causes baseline to move up/down slowly)
+    const respiration = 0.12 * Math.sin(time * 0.5); 
+    
+    // Muscle Tremor (High frequency micro-jitter)
+    const tremor = (Math.random() - 0.5) * 0.02;
+    
+    // Brownian Noise (Simulates realistic line interference)
+    const brownian = 0.05 * Math.sin(time * 0.2 + seed);
 
-    return baseline + (p + qrs + t_wave + wander + noise) * amplitude;
+    return baseline + (p + qrs + t_wave + respiration + tremor + brownian) * amplitude;
   };
 
   useEffect(() => {
@@ -286,16 +296,16 @@ export function LiveECGPage() {
         sessionDataRef.current.push(simVal);
 
         setEcgData((prev) => {
-          return [...prev, simVal].slice(-500); // Show more points for 100Hz
+          return [...prev, simVal].slice(-400); // 400 pts at 50Hz = 8s window
         });
         
-        // Show timestamps less frequently for 100Hz to save CPU
-        if (Math.floor(simTime * 100) % 5 === 0) {
-          setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-500));
+        // Update timestamps every 5 data points (100ms) to save UI thrashing
+        if (Math.floor(simTime * 50) % 5 === 0) {
+          setTimestamps((prev) => [...prev, new Date().toLocaleTimeString()].slice(-400));
         }
         
-        simTime += 0.01; // 10ms = 100Hz
-      }, 10);
+        simTime += 0.02; // 20ms = 50Hz
+      }, 20);
 
       // Duration Timer
       durationIntervalRef.current = setInterval(() => {
@@ -396,12 +406,12 @@ export function LiveECGPage() {
         tension: 0.1,
         pointRadius: (context: any) => {
           const val = context.dataset.data[context.dataIndex];
-          // Restore the red dot for R-peaks (typically > 2800 in this simulation)
-          return val > 2750 ? 4 : 0;
+          // Precise R-Peak detection targeted at the new biological range
+          return val > 2000 ? 4 : 0;
         },
         pointBackgroundColor: (context: any) => {
           const val = context.dataset.data[context.dataIndex];
-          return val > 2750 ? '#ef4444' : 'transparent';
+          return val > 2000 ? '#ef4444' : 'transparent';
         },
         pointBorderColor: 'transparent',
         spanGaps: true,

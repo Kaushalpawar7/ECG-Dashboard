@@ -115,13 +115,18 @@ export function SessionsPage() {
         doc.text(cat.name, 25, currentY);
         
         // Status
-        doc.setFont('helvetica', 'normal');
+        doc.setFont('helvetica', 'bold');
         if (prediction) {
           if (isMatched) {
-            doc.setTextColor(prediction.predicted_class === 'NORMAL' ? 22 : 220, prediction.predicted_class === 'NORMAL' ? 101 : 38, prediction.predicted_class === 'NORMAL' ? 52 : 38);
-            doc.text(prediction.predicted_class === 'NORMAL' ? 'NEGATIVE' : 'POSITIVE DETECTED', pageWidth - 25, currentY, { align: 'right' });
+            if (cat.id === 'NORMAL') {
+              doc.setTextColor(22, 101, 52); // Green
+              doc.text('NORMAL', pageWidth - 25, currentY, { align: 'right' });
+            } else {
+              doc.setTextColor(220, 38, 38); // Red
+              doc.text('POSITIVE / DETECTED', pageWidth - 25, currentY, { align: 'right' });
+            }
           } else {
-            doc.setTextColor(107, 114, 128);
+            doc.setTextColor(107, 114, 128); // Grey
             doc.text('NEGATIVE', pageWidth - 25, currentY, { align: 'right' });
           }
         } else {
@@ -138,6 +143,23 @@ export function SessionsPage() {
         doc.setFontSize(9);
         const displayConfidence = (prediction.confidence * 100).toFixed(1);
         doc.text(`* Final Interpretation based on ResNet-1D Classifier (${displayConfidence}% confidence)`, 25, currentY + 3);
+
+        // Add a clean Verdict block
+        currentY += 12;
+        doc.setFillColor(prediction.predicted_class === 'NORMAL' ? 240 : 254, prediction.predicted_class === 'NORMAL' ? 253 : 242, prediction.predicted_class === 'NORMAL' ? 244 : 242);
+        doc.roundedRect(20, currentY, pageWidth - 40, 15, 2, 2, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11);
+        doc.setTextColor(prediction.predicted_class === 'NORMAL' ? 22 : 185, prediction.predicted_class === 'NORMAL' ? 101 : 28, prediction.predicted_class === 'NORMAL' ? 52 : 28);
+        const catNames: Record<string, string> = {
+          'NORMAL': 'NORMAL SINUS RHYTHM',
+          'MI': 'MYOCARDIAL INFARCTION',
+          'STTC': 'ST/T WAVE CHANGES',
+          'CD': 'CONDUCTION DISTURBANCE',
+          'HYP': 'LEFT VENTRICULAR HYPERTROPHY'
+        };
+        const verdictText = catNames[prediction.predicted_class] || prediction.predicted_class;
+        doc.text(`OVERALL CLINICAL IMPRESSION: ${verdictText}`, pageWidth / 2, currentY + 10, { align: 'center' });
       }
 
       // 4. ECG Waveform Snapshot (6-Second Rhythm Strip)
