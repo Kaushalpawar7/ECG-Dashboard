@@ -401,31 +401,29 @@ export function LiveECGPage() {
       }
 
       // Final Step: Persist all recorded points to the database for report generation
-      // We do this BEFORE updating session status to ensure the data is there for anyone checking
       if (sessionDataRef.current.length > 0 && sessionId && selectedPatient) {
         const pointsToInsert = sessionDataRef.current.map((val, idx) => ({
           session_id: sessionId,
           patient_id: selectedPatient.id,
           ecg_value: Math.round(val),
-          // We calculate the relative timestamp (50ms intervals)
-          timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 50).toISOString()
+          timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 20).toISOString()
         }));
 
-        // Insert in batches with explicit error logging for debugging
-        const BATCH_SIZE = 500;
+        // Insert in larger batches with PARALLEL execution for speed
+        const BATCH_SIZE = 2000;
+        const uploadPromises = [];
+        
         for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
           const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
-          const { error: insertError } = await supabase.from('ecg_data').insert(batch);
-          
-          if (insertError) {
-            console.error('Supabase 400 Debug:', {
-               message: insertError.message,
-               details: insertError.details,
-               hint: insertError.hint,
-               batch_sample: batch[0]
-            });
-          }
+          uploadPromises.push(
+            supabase.from('ecg_data').insert(batch).then(({ error }) => {
+               if (error) console.error('Parallel Batch Error:', error);
+            })
+          );
         }
+
+        // Run all batches simultaneously
+        await Promise.all(uploadPromises);
       }
 
       await supabase

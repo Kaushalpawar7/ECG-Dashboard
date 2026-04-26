@@ -30,15 +30,21 @@ self.onmessage = async (e: MessageEvent) => {
 
       let chunkCount = 0;
 
-      // Slice the data into overlapping or sequential 1000-sample chunks
-      for (let i = 0; i <= data.length - CHUNK_SIZE; i += Math.floor(CHUNK_SIZE / 2)) {
+      // Optimization: If the dataset is huge, increase the stride to avoid over-sampling
+      const baseStride = Math.floor(CHUNK_SIZE / 2); // 500ms overlap
+      const stride = data.length > 30000 ? CHUNK_SIZE : baseStride; // 0% overlap for sessions > 5 mins
+      
+      // Limit to max 200 checks for ultra-long sessions (sanity cap)
+      const maxChecks = 200;
+      const step = data.length > 200000 ? Math.floor(data.length / maxChecks) : stride;
+
+      for (let i = 0; i <= data.length - CHUNK_SIZE; i += step) {
         const chunk = data.slice(i, i + CHUNK_SIZE);
         const result = await inferenceService.predict(chunk);
         
         predictions[result.label] += 1;
         chunkCount++;
         
-        // Dynamic progress update for the long prediction loop!
         const percent = Math.round((i / (data.length - CHUNK_SIZE)) * 100);
         self.postMessage({ type: 'ANALYSIS_PROGRESS', progress: percent });
       }
