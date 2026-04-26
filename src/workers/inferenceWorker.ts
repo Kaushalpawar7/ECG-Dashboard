@@ -32,24 +32,24 @@ self.onmessage = async (e: MessageEvent) => {
       let chunkCount = 0;
 
       const chunks: number[][] = [];
-      // DIAGNOSTIC GUARD: 
-      // Use 4 seconds of context (200 samples at 50Hz) for better rhythm visibility.
-      // 1000 points / 250Hz = 4 seconds. (Most ResNet models use 250Hz-500Hz).
-      const HW_WINDOW = 200; 
-      const processingStep = HW_WINDOW; // No overlap for faster processing
+      // CLINICAL RECALIBRATION: 
+      // 10-second window (500 samples at 50Hz) upsampled 2x to 1000 points.
+      // Standardizes the signal to a 100Hz clinical view.
+      const HW_WINDOW = 500; 
+      const processingStep = 100; // High resolution overlap
 
       for (let i = 0; i <= data.length - HW_WINDOW; i += processingStep) {
         const rawChunk = data.slice(i, i + HW_WINDOW);
         
-        // 1. STAGE 1: 40Hz CLINICAL LOW-PASS (Removes hardware jitter)
+        // 1. STAGE 1: 40Hz CLINICAL LOW-PASS
         const filteredChunk = new Float32Array(HW_WINDOW);
-        let alpha = 0.6; // Low-pass coefficient
+        let alpha = 0.5; 
         filteredChunk[0] = rawChunk[0];
         for (let j = 1; j < HW_WINDOW; j++) {
            filteredChunk[j] = alpha * rawChunk[j] + (1 - alpha) * filteredChunk[j-1];
         }
 
-        // 2. STAGE 2: 5x UPSAMPLING (50Hz -> 250Hz target)
+        // 2. STAGE 2: 2x UPSAMPLING (50Hz -> 100Hz clinical target)
         const upsampled = new Float32Array(CHUNK_SIZE);
         for (let j = 0; j < CHUNK_SIZE; j++) {
            const index = (j / CHUNK_SIZE) * (HW_WINDOW - 1);
@@ -59,11 +59,11 @@ self.onmessage = async (e: MessageEvent) => {
            upsampled[j] = filteredChunk[low] * (1 - weight) + filteredChunk[high] * weight;
         }
         
-        // 3. STAGE 3: MIN-MAX NORMALIZATION [0, 1] (Standard for many CNNs)
-        const min = Math.min(...Array.from(upsampled));
-        const max = Math.max(...Array.from(upsampled));
-        const range = (max - min) || 1.0;
-        const normalized = Array.from(upsampled).map(v => (v - min) / range);
+        // 3. STAGE 3: MIN-MAX NORMALIZATION [0, 1]
+        const minVal = Math.min(...Array.from(upsampled));
+        const maxVal = Math.max(...Array.from(upsampled));
+        const range = (maxVal - minVal) || 1.0;
+        const normalized = Array.from(upsampled).map(v => (v - minVal) / range);
         
         chunks.push(normalized);
       }

@@ -207,6 +207,13 @@ export function LiveECGPage() {
   }, [isRecording, dataMode, isConnected]);
 
   useEffect(() => {
+    // Clear buffer when patient changes to prevent data bleed
+    hardwareBufferRef.current = [];
+    setEcgData([]);
+    setTimestamps([]);
+  }, [selectedPatient?.id]);
+
+  useEffect(() => {
     if (!database) return;
     const statusRef = ref(database, '/live/status');
     const unsubStatus = onValue(statusRef, (snap) => setLeadsConnected(snap.val() === "ON"));
