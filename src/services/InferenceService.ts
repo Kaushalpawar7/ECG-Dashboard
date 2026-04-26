@@ -71,6 +71,13 @@ export class InferenceService {
     onProgress?: (progress: number) => void
   ) {
     try {
+      // Force hardware acceleration for speed
+      try {
+        await tf.setBackend('webgl');
+      } catch {
+        await tf.setBackend('cpu');
+      }
+      
       console.log(`Fetching architecture metadata from: ${metaUrl}`);
       const metaResponse = await fetch(metaUrl);
       const metadata = await metaResponse.json();

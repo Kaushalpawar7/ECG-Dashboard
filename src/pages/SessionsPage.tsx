@@ -23,11 +23,12 @@ export function SessionsPage() {
     try {
       const { data, error } = await supabase
         .from('ecg_sessions')
-        .select('*, patients(*), predictions(*)')
+        // Exclude raw_data from initial list to keep it fast
+        .select('id, patient_id, created_at, start_time, end_time, status, duration, patients(*), predictions(*)')
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setSessions(data || []);
+      setSessions((data as any) || []);
     } catch (error) {
       console.error('Error loading sessions:', error);
     }
@@ -36,14 +37,19 @@ export function SessionsPage() {
   const generateReport = async (session: SessionWithPatient) => {
     try {
       setGeneratingId(session.id);
-      const { data: ecgPoints, error } = await supabase
-        .from('ecg_data')
-        .select('*')
-        .eq('session_id', session.id)
-        .order('timestamp', { ascending: true })
-        .limit(600); // 6 seconds at 100Hz
+      
+      // Fetch the raw data for this specific session only when needed
+      const { data: sessionInfo, error } = await supabase
+        .from('ecg_sessions')
+        .select('raw_data')
+        .eq('id', session.id)
+        .single();
 
       if (error) throw error;
+      
+      const rawData = sessionInfo?.raw_data as number[] || [];
+      // Grab a representative 6-second slice (approx 300-600 points)
+      const ecgPoints = rawData.slice(0, 600);
 
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -196,9 +202,9 @@ export function SessionsPage() {
 
         for (let i = 0; i < ecgPoints.length - 1; i++) {
           const x1 = chartX + i * stepX;
-          const y1 = chartY + chartHeight - (ecgPoints[i].ecg_value - minVal) * scaleY;
+          const y1 = chartY + chartHeight - (ecgPoints[i] - minVal) * scaleY;
           const x2 = chartX + (i + 1) * stepX;
-          const y2 = chartY + chartHeight - (ecgPoints[i + 1].ecg_value - minVal) * scaleY;
+          const y2 = chartY + chartHeight - (ecgPoints[i + 1] - minVal) * scaleY;
           doc.line(x1, y1, x2, y2);
         }
       }
@@ -221,16 +227,21 @@ export function SessionsPage() {
   const downloadSession = async (sessionId: string, patientName: string) => {
     try {
       const { data, error } = await supabase
-        .from('ecg_data')
-        .select('*')
-        .eq('session_id', sessionId)
-        .order('timestamp', { ascending: true });
+        .from('ecg_sessions')
+        .select('raw_data, start_time')
+        .eq('id', sessionId)
+        .single();
 
       if (error) throw error;
+      const rawData = data?.raw_data as number[] || [];
+      const startTime = new Date(data?.start_time || Date.now());
 
       const csvContent = [
-        ['Timestamp', 'ECG Value'].join(','),
-        ...(data || []).map((row) => [row.timestamp, row.ecg_value].join(',')),
+        ['Index', 'Relative Timestamp', 'ECG Value'].join(','),
+        ...rawData.map((val, idx) => {
+           const time = new Date(startTime.getTime() + idx * 20).toLocaleTimeString();
+           return [idx, time, val].join(',');
+        }),
       ].join('\n');
 
       const blob = new Blob([csvContent], { type: 'text/csv' });

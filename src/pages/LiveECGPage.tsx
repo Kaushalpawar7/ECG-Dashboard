@@ -187,14 +187,11 @@ export function LiveECGPage() {
          if (hardwareBufferRef.current.length === 0) return; // Wait for data
          
          const rawVal = hardwareBufferRef.current.shift()!;
-         
-         // Apply Digital Low-Pass Filter (Exponential Moving Average)
-         // alpha = 0.3 provides a good balance between smoothing and peak preservation
-         const alpha = 0.3;
+         // Stronger Filter (alpha 0.1) for silky-smooth hardware lines
+         const alpha = 0.1;
          nextVal = alpha * rawVal + (1 - alpha) * lastFilteredValRef.current;
          lastFilteredValRef.current = nextVal;
       } else {
-         // This is handled by the simulation interval for now
          return;
       }
 
@@ -202,7 +199,6 @@ export function LiveECGPage() {
       setEcgData(prev => [...prev, nextVal].slice(-400));
       sessionDataRef.current.push(nextVal);
       
-      // Update timestamps periodically
       if (sessionDataRef.current.length % 5 === 0) {
         setTimestamps(prev => [...prev, new Date().toLocaleTimeString()].slice(-400));
       }
@@ -392,46 +388,25 @@ export function LiveECGPage() {
       if (durationIntervalRef.current) clearInterval(durationIntervalRef.current);
 
       setIsRecording(false);
+      // We explicitly DON'T reset sessionDuration here so it stays on screen during finalize
       setIsFinalizing(true);
       setIsAnalyzing(true);
       setAnalysisProgress(0);
 
+      // Stage 1: Send COMPLETELY RAW data to AI for analysis (No loss)
       if (workerRef.current && sessionDataRef.current.length > 0) {
         workerRef.current.postMessage({ type: 'PREDICT', payload: sessionDataRef.current });
       }
 
-      // Final Step: Persist all recorded points to the database for report generation
-      if (sessionDataRef.current.length > 0 && sessionId && selectedPatient) {
-        const pointsToInsert = sessionDataRef.current.map((val, idx) => ({
-          session_id: sessionId,
-          patient_id: selectedPatient.id,
-          ecg_value: Math.round(val),
-          timestamp: new Date(Date.now() - (sessionDataRef.current.length - idx) * 20).toISOString()
-        }));
-
-        // Insert in larger batches with PARALLEL execution for speed
-        const BATCH_SIZE = 2000;
-        const uploadPromises = [];
-        
-        for (let i = 0; i < pointsToInsert.length; i += BATCH_SIZE) {
-          const batch = pointsToInsert.slice(i, i + BATCH_SIZE);
-          uploadPromises.push(
-            supabase.from('ecg_data').insert(batch).then(({ error }) => {
-               if (error) console.error('Parallel Batch Error:', error);
-            })
-          );
-        }
-
-        // Run all batches simultaneously
-        await Promise.all(uploadPromises);
-      }
-
+      // Stage 2: Instant Persistence (One row, one array)
+      // This is much faster and more efficient than mapping thousands of rows
       await supabase
         .from('ecg_sessions')
         .update({
           status: 'completed',
           end_time: new Date().toISOString(),
           duration: sessionDuration,
+          raw_data: sessionDataRef.current // Store the entire array in one column
         })
         .eq('id', sessionId);
 
@@ -470,8 +445,8 @@ export function LiveECGPage() {
         borderWidth: 2,
         tension: 0.1,
         pointRadius: (context: any) => {
+          if (dataMode === 'hardware') return 0; // Hide peaks for noisy hardware
           const val = context.dataset.data[context.dataIndex];
-          // Precise R-Peak detection targeted at the new biological range
           return val > 2000 ? 4 : 0;
         },
         pointBackgroundColor: (context: any) => {
