@@ -177,27 +177,38 @@ export function LiveECGPage() {
       })
     );
 
+    // 2nd Order Butterworth Low-Pass (40Hz) + High-Pass (0.5Hz) State
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    
     // 50Hz Processing Clock (20ms interval)
-    // This pulls data from either the Simulator or the Hardware Buffer
     const processingInterval = setInterval(() => {
       if (!isRecording) return;
 
       let nextVal = 0;
       if (dataMode === 'hardware') {
-         if (hardwareBufferRef.current.length === 0) return; // Wait for data
-         
+         if (hardwareBufferRef.current.length === 0) return; 
          const rawVal = hardwareBufferRef.current.shift()!;
-         // Stronger Filter (alpha 0.1) for silky-smooth hardware lines
-         const alpha = 0.1;
-         nextVal = alpha * rawVal + (1 - alpha) * lastFilteredValRef.current;
+         
+         // Store RAW data for AI accuracy
+         sessionDataRef.current.push(rawVal);
+
+         // Clinical Biquad Bandpass Filter (0.5Hz - 40Hz @ 500Hz)
+         const b = [0.067455, 0, -0.067455];
+         const a = [-1.86689, 0.86509];
+         const filtered = b[0]*rawVal + b[2]*x2 - a[0]*y1 - a[1]*y2;
+         
+         // Update Filter State
+         x2 = x1; x1 = rawVal;
+         y2 = y1; y1 = filtered;
+
+         nextVal = filtered;
          lastFilteredValRef.current = nextVal;
       } else {
          return;
       }
 
-      // Update UI
+      // Update UI with FILTERED value
       setEcgData(prev => [...prev, nextVal].slice(-400));
-      sessionDataRef.current.push(nextVal);
       
       if (sessionDataRef.current.length % 5 === 0) {
         setTimestamps(prev => [...prev, new Date().toLocaleTimeString()].slice(-400));

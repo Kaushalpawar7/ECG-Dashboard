@@ -1,3 +1,4 @@
+import * as tf from '@tensorflow/tfjs';
 import { inferenceService } from '../services/InferenceService';
 
 self.onmessage = async (e: MessageEvent) => {
@@ -38,15 +39,43 @@ self.onmessage = async (e: MessageEvent) => {
       const maxChecks = 200;
       const step = data.length > 200000 ? Math.floor(data.length / maxChecks) : stride;
 
+      const chunks: number[][] = [];
       for (let i = 0; i <= data.length - CHUNK_SIZE; i += step) {
-        const chunk = data.slice(i, i + CHUNK_SIZE);
-        const result = await inferenceService.predict(chunk);
-        
-        predictions[result.label] += 1;
-        chunkCount++;
-        
-        const percent = Math.round((i / (data.length - CHUNK_SIZE)) * 100);
-        self.postMessage({ type: 'ANALYSIS_PROGRESS', progress: percent });
+        chunks.push(data.slice(i, i + CHUNK_SIZE));
+      }
+
+      if (chunks.length > 0) {
+        const CHUNKS_PER_GPU_BATCH = 32;
+        const labels = ['NORMAL', 'MI', 'STTC', 'CD', 'HYP'];
+
+        for (let b = 0; b < chunks.length; b += CHUNKS_PER_GPU_BATCH) {
+          const miniBatch = chunks.slice(b, b + CHUNKS_PER_GPU_BATCH);
+          
+          // Manual memory management for async loop
+          const inputTensor = tf.tensor3d(miniBatch.flat(), [miniBatch.length, CHUNK_SIZE, 1]);
+          const outputTensor = inferenceService.modelInstance?.predict(inputTensor) as tf.Tensor;
+          const results = await outputTensor.data();
+
+          for (let j = 0; j < miniBatch.length; j++) {
+            let maxVal = -1;
+            let maxIdx = 0;
+            for (let k = 0; k < 5; k++) {
+              const val = results[j * 5 + k];
+              if (val > maxVal) {
+                maxVal = val;
+                maxIdx = k;
+              }
+            }
+            predictions[labels[maxIdx]] += 1;
+            chunkCount++;
+          }
+
+          inputTensor.dispose();
+          outputTensor.dispose();
+
+          const percent = Math.round(((b + miniBatch.length) / chunks.length) * 100);
+          self.postMessage({ type: 'ANALYSIS_PROGRESS', progress: percent });
+        }
       }
 
       // Calculate final distribution

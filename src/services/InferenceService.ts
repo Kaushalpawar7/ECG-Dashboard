@@ -238,6 +238,10 @@ export class InferenceService {
       };
     });
   }
+  // Public getter for high-performance batch processing in workers
+  get modelInstance() {
+    return this.model;
+  }
 }
 
 export const inferenceService = new InferenceService();
