@@ -41,7 +41,15 @@ self.onmessage = async (e: MessageEvent) => {
 
       const chunks: number[][] = [];
       for (let i = 0; i <= data.length - CHUNK_SIZE; i += step) {
-        chunks.push(data.slice(i, i + CHUNK_SIZE));
+        const chunk = data.slice(i, i + CHUNK_SIZE);
+        
+        // Z-SCORE NORMALIZATION (Vital for clinical accuracy)
+        const mean = chunk.reduce((a, b) => a + b, 0) / CHUNK_SIZE;
+        const variance = chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / CHUNK_SIZE;
+        const std = Math.sqrt(variance) || 1.0; 
+        const normalized = chunk.map(v => (v - mean) / std);
+        
+        chunks.push(normalized);
       }
 
       if (chunks.length > 0) {
@@ -51,8 +59,13 @@ self.onmessage = async (e: MessageEvent) => {
         for (let b = 0; b < chunks.length; b += CHUNKS_PER_GPU_BATCH) {
           const miniBatch = chunks.slice(b, b + CHUNKS_PER_GPU_BATCH);
           
-          // Manual memory management for async loop
-          const inputTensor = tf.tensor3d(miniBatch.flat(), [miniBatch.length, CHUNK_SIZE, 1]);
+          // Use high-performance float32 flattened array
+          const flattened = new Float32Array(miniBatch.length * CHUNK_SIZE);
+          for (let i = 0; i < miniBatch.length; i++) {
+            flattened.set(miniBatch[i], i * CHUNK_SIZE);
+          }
+
+          const inputTensor = tf.tensor3d(flattened, [miniBatch.length, CHUNK_SIZE, 1]);
           const outputTensor = inferenceService.modelInstance?.predict(inputTensor) as tf.Tensor;
           const results = await outputTensor.data();
 

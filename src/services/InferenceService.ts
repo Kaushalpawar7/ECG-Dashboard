@@ -227,7 +227,12 @@ export class InferenceService {
     if (!this.model) return { label: 'Initializing Model...', confidence: 0 };
 
     return tf.tidy(() => {
-      const tensor = tf.tensor(data, [1, 1000, 1]).div(4095.0);
+      const chunkTensor = tf.tensor(data);
+      const mean = chunkTensor.mean();
+      const std = tf.moments(chunkTensor).variance.sqrt().add(1e-6); 
+      const normalized = chunkTensor.sub(mean).div(std);
+      const tensor = normalized.reshape([1, 1000, 1]);
+      
       const prediction = this.model!.predict(tensor) as tf.Tensor;
       const scores = prediction.dataSync();
       const maxIdx = prediction.argMax(1).dataSync()[0];

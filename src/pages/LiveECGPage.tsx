@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { User, AlertCircle, Play, Square, Activity, Database, CheckCircle, Clock } from 'lucide-react';
+import { User, AlertCircle, Play, Square, Activity, Database, CheckCircle } from 'lucide-react';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -221,7 +221,7 @@ export function LiveECGPage() {
         const t = snap.val();
         if (!initialDataCapturedRef.current) {
           slotValuesRef.current[id] = t;
-          if (Object.keys(slotValuesRef.current).length === 3) initialDataCapturedRef.current = true;
+          if (Object.keys(slotValuesRef.current).length >= 2) initialDataCapturedRef.current = true;
         } else if (t > (slotValuesRef.current[id] || 0)) {
           setIsConnected(true);
           lastUpdateRef.current = Date.now();
@@ -254,6 +254,7 @@ export function LiveECGPage() {
       setSessionDuration(0);
       setSessionResult(null);
       sessionDataRef.current = [];
+      hardwareBufferRef.current = []; // Freshness Guard
       durationIntervalRef.current = setInterval(() => setSessionDuration(d => d + 1), 1000);
     }
   };
@@ -382,8 +383,8 @@ export function LiveECGPage() {
                   scales: {
                     x: { display: false },
                     y: {
-                      min: 1750,
-                      max: 2100,
+                      min: 1500,
+                      max: 2250,
                       grid: { color: 'rgba(255,255,255,0.05)' },
                       ticks: { color: 'rgba(255,255,255,0.3)', font: { size: 10 } }
                     }
