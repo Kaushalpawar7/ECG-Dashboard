@@ -58,6 +58,8 @@ export function LiveECGPage() {
   const selectedPatientRef = useRef<Patient | null>(null);
   const slotValuesRef = useRef<Record<string, number>>({});
   const initialDataCapturedRef = useRef<boolean>(false);
+  const hardwareBufferRef = useRef<number[]>([]);
+  const lastFilteredValRef = useRef<number>(1900);
 
   // Keep IDs in Refs to avoid stale closures in Web Worker listener
   useEffect(() => {
@@ -167,17 +169,44 @@ export function LiveECGPage() {
            }
 
            if (points.length > 0) {
-              setEcgData(prev => [...prev, ...points].slice(-600));
-              setTimestamps(prev => {
-                const now = new Date().toLocaleTimeString();
-                const tsBatch = new Array(points.length).fill(now);
-                return [...prev, ...tsBatch].slice(-600);
-              });
-              sessionDataRef.current = [...sessionDataRef.current, ...points];
+              // Add new points to the "Holding Tank" (Buffer)
+              hardwareBufferRef.current = [...hardwareBufferRef.current, ...points];
+              // We don't plot them here anymore; the processing clock handles it
            }
         }
       })
     );
+
+    // 50Hz Processing Clock (20ms interval)
+    // This pulls data from either the Simulator or the Hardware Buffer
+    const processingInterval = setInterval(() => {
+      if (!isRecording) return;
+
+      let nextVal = 0;
+      if (dataMode === 'hardware') {
+         if (hardwareBufferRef.current.length === 0) return; // Wait for data
+         
+         const rawVal = hardwareBufferRef.current.shift()!;
+         
+         // Apply Digital Low-Pass Filter (Exponential Moving Average)
+         // alpha = 0.3 provides a good balance between smoothing and peak preservation
+         const alpha = 0.3;
+         nextVal = alpha * rawVal + (1 - alpha) * lastFilteredValRef.current;
+         lastFilteredValRef.current = nextVal;
+      } else {
+         // This is handled by the simulation interval for now
+         return;
+      }
+
+      // Update UI
+      setEcgData(prev => [...prev, nextVal].slice(-400));
+      sessionDataRef.current.push(nextVal);
+      
+      // Update timestamps periodically
+      if (sessionDataRef.current.length % 5 === 0) {
+        setTimestamps(prev => [...prev, new Date().toLocaleTimeString()].slice(-400));
+      }
+    }, 20);
 
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -185,6 +214,7 @@ export function LiveECGPage() {
       if (firebaseListenerRef.current) firebaseListenerRef.current();
       if (workerRef.current) workerRef.current.terminate();
       slotDataUnsubscribes.forEach(unsub => unsub());
+      clearInterval(processingInterval);
     };
   }, [dataMode, isRecording]); // Re-attach when mode or recording status changes
 
