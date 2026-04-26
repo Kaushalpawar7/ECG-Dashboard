@@ -156,11 +156,14 @@ export function LiveECGPage() {
         session_id: sId,
         patient_id: pId,
         predicted_class: result.diagnosis,
-        confidence: result.confidence
+        confidence: result.confidence / 100 // Normalize to 0-1 for DB constraints
       }]);
 
       if (error) throw error;
-      console.log('AI Prediction successfully persisted to Supabase');
+      console.log('AI Prediction successfully persisted to Supabase:', {
+        diagnosis: result.diagnosis,
+        confidence: result.confidence
+      });
     } catch (err) {
       console.error('Error saving prediction to DB:', err);
     }

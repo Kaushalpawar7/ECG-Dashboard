@@ -136,7 +136,8 @@ export function SessionsPage() {
         doc.setTextColor(31, 41, 55);
         doc.setFont('helvetica', 'italic');
         doc.setFontSize(9);
-        doc.text(`* Final Interpretation based on ResNet-1D Classifier (${prediction.confidence}% confidence)`, 25, currentY + 3);
+        const displayConfidence = (prediction.confidence * 100).toFixed(1);
+        doc.text(`* Final Interpretation based on ResNet-1D Classifier (${displayConfidence}% confidence)`, 25, currentY + 3);
       }
 
       // 4. ECG Waveform Snapshot (6-Second Rhythm Strip)
@@ -336,7 +337,7 @@ export function SessionsPage() {
                           {session.predictions[0].predicted_class}
                         </span>
                         <span className="text-xs text-gray-500">
-                          {session.predictions[0].confidence}% Confidence
+                          {(session.predictions[0].confidence * 100).toFixed(1)}% Confidence
                         </span>
                       </div>
                     ) : (
