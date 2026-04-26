@@ -177,10 +177,10 @@ export function LiveECGPage() {
       })
     );
 
-    // 2nd Order Butterworth Low-Pass (40Hz) + High-Pass (0.5Hz) State
-    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    // High-Stability Filter State
+    const movingAvgBuffer: number[] = [];
+    const WINDOW_SIZE = 5;
     
-    // 50Hz Processing Clock (20ms interval)
     const processingInterval = setInterval(() => {
       if (!isRecording) return;
 
@@ -189,25 +189,26 @@ export function LiveECGPage() {
          if (hardwareBufferRef.current.length === 0) return; 
          const rawVal = hardwareBufferRef.current.shift()!;
          
+         // Ignore obvious junk data (Leads off or zero)
+         if (rawVal < 10) return;
+
          // Store RAW data for AI accuracy
          sessionDataRef.current.push(rawVal);
 
-         // Clinical Biquad Bandpass Filter (0.5Hz - 40Hz @ 500Hz)
-         const b = [0.067455, 0, -0.067455];
-         const a = [-1.86689, 0.86509];
-         const filtered = b[0]*rawVal + b[2]*x2 - a[0]*y1 - a[1]*y2;
+         // --- High-Stability Moving Average Filter ---
+         movingAvgBuffer.push(rawVal);
+         if (movingAvgBuffer.length > WINDOW_SIZE) movingAvgBuffer.shift();
          
-         // Update Filter State
-         x2 = x1; x1 = rawVal;
-         y2 = y1; y1 = filtered;
+         const sum = movingAvgBuffer.reduce((a, b) => a + b, 0);
+         const averaged = sum / movingAvgBuffer.length;
 
-         nextVal = filtered;
-         lastFilteredValRef.current = nextVal;
+         // Safety Clamp to prevent scale explosion
+         nextVal = Math.min(2200, Math.max(1700, averaged));
       } else {
          return;
       }
 
-      // Update UI with FILTERED value
+      // Update UI with CLEAN STABLE value
       setEcgData(prev => [...prev, nextVal].slice(-400));
       
       if (sessionDataRef.current.length % 5 === 0) {
@@ -383,7 +384,7 @@ export function LiveECGPage() {
 
       // Duration Timer
       durationIntervalRef.current = setInterval(() => {
-        setSessionDuration((prev) => prev + 1);
+        setSessionDuration((d) => d + 1);
       }, 1000);
 
     } catch (error) {
@@ -572,6 +573,8 @@ export function LiveECGPage() {
                     scales: {
                       x: { display: false },
                       y: {
+                        min: 1750,
+                        max: 2100,
                         beginAtZero: false,
                         border: { dash: [4, 4] },
                         grid: { color: 'rgba(255, 255, 255, 0.08)' },
