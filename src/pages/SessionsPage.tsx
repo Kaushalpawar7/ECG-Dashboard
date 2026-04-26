@@ -49,7 +49,26 @@ export function SessionsPage() {
       
       const rawData = sessionInfo?.raw_data as number[] || [];
       // Grab a representative 6-second slice (approx 300-600 points)
-      const ecgPoints = rawData.slice(0, 600);
+      const ecgPointsRaw = rawData.slice(0, 600);
+      
+      // APPLY CLINICAL AMPLIFICATION (Same logic as Live Dashboard)
+      const WINDOW_SIZE = 50; 
+      let processedPoints: number[] = [];
+      let baselineWindow: number[] = [];
+      
+      const pMin = Math.min(...ecgPointsRaw);
+      const pMax = Math.max(...ecgPointsRaw);
+      const currentRange = Math.max(10, pMax - pMin);
+      const gain = 180 / currentRange; // Amplify to clinical target
+      
+      for (let i = 0; i < ecgPointsRaw.length; i++) {
+        baselineWindow.push(ecgPointsRaw[i]);
+        if (baselineWindow.length > WINDOW_SIZE) baselineWindow.shift();
+        const currentMean = baselineWindow.reduce((a, b) => a + b, 0) / baselineWindow.length;
+        processedPoints.push(((ecgPointsRaw[i] - currentMean) * gain) + 1850);
+      }
+      
+      const ecgPoints = processedPoints;
 
       const doc = new jsPDF();
       const pageWidth = doc.internal.pageSize.getWidth();
@@ -93,7 +112,7 @@ export function SessionsPage() {
       doc.text('2. AI Diagnostic Summary', 20, 105);
       doc.line(20, 108, pageWidth - 20, 108);
 
-      // Re-fetch latest prediction to ensure we don't show "Pending" if it just completed
+      // Re-fetch latest prediction
       const { data: freshPredictions } = await supabase
         .from('predictions')
         .select('*')
@@ -114,32 +133,28 @@ export function SessionsPage() {
       
       categories.forEach((cat) => {
         const isMatched = prediction?.predicted_class === cat.id;
-        
-        // Label
         doc.setFont('helvetica', 'bold');
         doc.setTextColor(31, 41, 55);
         doc.text(cat.name, 25, currentY);
         
-        // Status
         doc.setFont('helvetica', 'bold');
         if (prediction) {
           if (isMatched) {
             if (cat.id === 'NORMAL') {
-              doc.setTextColor(22, 101, 52); // Green
+              doc.setTextColor(22, 101, 52);
               doc.text('NORMAL', pageWidth - 25, currentY, { align: 'right' });
             } else {
-              doc.setTextColor(220, 38, 38); // Red
+              doc.setTextColor(220, 38, 38);
               doc.text('POSITIVE / DETECTED', pageWidth - 25, currentY, { align: 'right' });
             }
           } else {
-            doc.setTextColor(107, 114, 128); // Grey
+            doc.setTextColor(107, 114, 128);
             doc.text('NEGATIVE', pageWidth - 25, currentY, { align: 'right' });
           }
         } else {
           doc.setTextColor(156, 163, 175);
           doc.text('PENDING ANALYSIS', pageWidth - 25, currentY, { align: 'right' });
         }
-        
         currentY += 7;
       });
 
@@ -150,7 +165,6 @@ export function SessionsPage() {
         const displayConfidence = (prediction.confidence * 100).toFixed(1);
         doc.text(`* Final Interpretation based on ResNet-1D Classifier (${displayConfidence}% confidence)`, 25, currentY + 3);
 
-        // Add a clean Verdict block
         currentY += 12;
         doc.setFillColor(prediction.predicted_class === 'NORMAL' ? 240 : 254, prediction.predicted_class === 'NORMAL' ? 253 : 242, prediction.predicted_class === 'NORMAL' ? 244 : 242);
         doc.roundedRect(20, currentY, pageWidth - 40, 15, 2, 2, 'F');
@@ -176,7 +190,6 @@ export function SessionsPage() {
       doc.line(20, 163, pageWidth - 20, 163);
 
       if (ecgPoints && ecgPoints.length > 0) {
-        // Draw a simulated ECG grid
         const chartX = 20;
         const chartY = 175;
         const chartWidth = pageWidth - 40;
@@ -195,8 +208,9 @@ export function SessionsPage() {
         doc.setDrawColor(37, 99, 235);
         doc.setLineWidth(0.5);
         
-        const minVal = 1000;
-        const maxVal = 3000;
+        // FOCUS SCALE: 1700 - 2000 (Centered at 1850)
+        const minVal = 1700;
+        const maxVal = 2000;
         const scaleY = chartHeight / (maxVal - minVal);
         const stepX = chartWidth / ecgPoints.length;
 
