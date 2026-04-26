@@ -157,24 +157,33 @@ export function LiveECGPage() {
     return () => unsubs.forEach(unsub => unsub());
   }, [dataMode, isRecording]);
 
-  useEffect(() => {
+   useEffect(() => {
     if (!isRecording) return;
-    const movingAvgBuffer: number[] = [];
-    const WINDOW_SIZE = 5;
+    const baselineWindow: number[] = [];
+    const WINDOW_SIZE = 50; 
+    let emaVal = 1850;
+
     const clock = setInterval(() => {
       let nextVal = generateRealisticECG(Date.now() / 1000, 0, isConnected || dataMode === 'simulation');
+
       if (dataMode === 'hardware') {
          if (hardwareBufferRef.current.length === 0) return; 
          const rawVal = hardwareBufferRef.current.shift()!;
          if (rawVal < 10) return;
+
+         baselineWindow.push(rawVal);
+         if (baselineWindow.length > WINDOW_SIZE) baselineWindow.shift();
+         const currentMean = baselineWindow.reduce((a, b) => a + b, 0) / baselineWindow.length;
+         
+         const centered = (rawVal - currentMean) + 1850;
+         emaVal = (centered * 0.7) + (emaVal * 0.3);
+         
          sessionDataRef.current.push(rawVal);
-         movingAvgBuffer.push(rawVal);
-         if (movingAvgBuffer.length > WINDOW_SIZE) movingAvgBuffer.shift();
-         const sum = movingAvgBuffer.reduce((a, b) => a + b, 0);
-         nextVal = Math.min(2200, Math.max(1750, sum / movingAvgBuffer.length));
+         nextVal = Math.min(2250, Math.max(1650, emaVal));
       } else {
          sessionDataRef.current.push(nextVal);
       }
+
       setEcgData(prev => [...prev, nextVal].slice(-400));
       if (sessionDataRef.current.length % 5 === 0) {
         setTimestamps(prev => [...prev, new Date().toLocaleTimeString()].slice(-400));
@@ -265,8 +274,8 @@ export function LiveECGPage() {
         label: 'ECG Signal',
         data: ecgData.length > 0 ? ecgData : Array(400).fill(1850),
         borderColor: '#06b6d4',
-        borderWidth: 2.5,
-        tension: 0.15,
+        borderWidth: 2,
+        tension: 0.05,
         pointRadius: 0,
         fill: true,
         backgroundColor: (context: any) => {
