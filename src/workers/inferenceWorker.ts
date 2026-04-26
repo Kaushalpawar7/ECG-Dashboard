@@ -32,11 +32,11 @@ self.onmessage = async (e: MessageEvent) => {
       let chunkCount = 0;
 
       const chunks: number[][] = [];
-      // CLINICAL RECALIBRATION: 
-      // 10-second window (500 samples at 50Hz) upsampled 2x to 1000 points.
-      // Standardizes the signal to a 100Hz clinical view.
-      const HW_WINDOW = 500; 
-      const processingStep = 100; // High resolution overlap
+      // DEEP RHYTHM RECALIBRATION: 
+      // 20-second window (1000 samples at 50Hz).
+      // Provides the AI with the max possible contextual memory for rhythm analysis.
+      const HW_WINDOW = 1000; 
+      const processingStep = 500; // 50% overlap for comprehensive analysis
 
       for (let i = 0; i <= data.length - HW_WINDOW; i += processingStep) {
         const rawChunk = data.slice(i, i + HW_WINDOW);
@@ -49,21 +49,22 @@ self.onmessage = async (e: MessageEvent) => {
            filteredChunk[j] = alpha * rawChunk[j] + (1 - alpha) * filteredChunk[j-1];
         }
 
-        // 2. STAGE 2: 2x UPSAMPLING (50Hz -> 100Hz clinical target)
-        const upsampled = new Float32Array(CHUNK_SIZE);
-        for (let j = 0; j < CHUNK_SIZE; j++) {
-           const index = (j / CHUNK_SIZE) * (HW_WINDOW - 1);
-           const low = Math.floor(index);
-           const high = Math.min(HW_WINDOW - 1, Math.ceil(index));
-           const weight = index - low;
-           upsampled[j] = filteredChunk[low] * (1 - weight) + filteredChunk[high] * weight;
-        }
+        // 2. STAGE 2: NATIVE FREQUENCY (50Hz - 1:1 Mapping)
+        const processed = Array.from(filteredChunk);
         
-        // 3. STAGE 3: MIN-MAX NORMALIZATION [0, 1]
-        const minVal = Math.min(...Array.from(upsampled));
-        const maxVal = Math.max(...Array.from(upsampled));
-        const range = (maxVal - minVal) || 1.0;
-        const normalized = Array.from(upsampled).map(v => (v - minVal) / range);
+        // 3. STAGE 3: POLARITY & ZERO-CENTERED SCALING [-1, 1]
+        const minVal = Math.min(...processed);
+        const maxVal = Math.max(...processed);
+        const midVal = (maxVal + minVal) / 2;
+        const range = (maxVal - minVal) / 2 || 1.0;
+        
+        // AUTO-INVERSION: Standardize orientation for ResNet
+        const needsFlip = Math.abs(minVal - midVal) > Math.abs(maxVal - midVal);
+        
+        const normalized = processed.map(v => {
+           let val = (v - midVal) / range;
+           return needsFlip ? -val : val; 
+        });
         
         chunks.push(normalized);
       }
