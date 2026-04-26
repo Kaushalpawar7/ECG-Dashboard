@@ -32,35 +32,38 @@ self.onmessage = async (e: MessageEvent) => {
       let chunkCount = 0;
 
       const chunks: number[][] = [];
-      const HW_WINDOW = 100; // 2 seconds at 50Hz
-      
-      const processingStep = data.length > 20000 
-        ? HW_WINDOW 
-        : Math.floor(HW_WINDOW / 2);
+      // DIAGNOSTIC GUARD: 
+      // Use 4 seconds of context (200 samples at 50Hz) for better rhythm visibility.
+      // 1000 points / 250Hz = 4 seconds. (Most ResNet models use 250Hz-500Hz).
+      const HW_WINDOW = 200; 
+      const processingStep = HW_WINDOW; // No overlap for faster processing
 
       for (let i = 0; i <= data.length - HW_WINDOW; i += processingStep) {
         const rawChunk = data.slice(i, i + HW_WINDOW);
         
-        // 10x LINEAR INTERPOLATION (50Hz -> 500Hz)
+        // 1. STAGE 1: 40Hz CLINICAL LOW-PASS (Removes hardware jitter)
+        const filteredChunk = new Float32Array(HW_WINDOW);
+        let alpha = 0.6; // Low-pass coefficient
+        filteredChunk[0] = rawChunk[0];
+        for (let j = 1; j < HW_WINDOW; j++) {
+           filteredChunk[j] = alpha * rawChunk[j] + (1 - alpha) * filteredChunk[j-1];
+        }
+
+        // 2. STAGE 2: 5x UPSAMPLING (50Hz -> 250Hz target)
         const upsampled = new Float32Array(CHUNK_SIZE);
         for (let j = 0; j < CHUNK_SIZE; j++) {
-           const index = j / 10; 
+           const index = (j / CHUNK_SIZE) * (HW_WINDOW - 1);
            const low = Math.floor(index);
-           const high = Math.ceil(index);
+           const high = Math.min(HW_WINDOW - 1, Math.ceil(index));
            const weight = index - low;
-           
-           if (high >= rawChunk.length) {
-              upsampled[j] = rawChunk[rawChunk.length - 1];
-           } else {
-              upsampled[j] = rawChunk[low] * (1 - weight) + rawChunk[high] * weight;
-           }
+           upsampled[j] = filteredChunk[low] * (1 - weight) + filteredChunk[high] * weight;
         }
         
-        // Z-SCORE NORMALIZATION on upsampled data
-        const mean = upsampled.reduce((a, b) => a + b, 0) / CHUNK_SIZE;
-        const variance = upsampled.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / CHUNK_SIZE;
-        const std = Math.sqrt(variance) || 1.0; 
-        const normalized = Array.from(upsampled).map(v => (v - mean) / std);
+        // 3. STAGE 3: MIN-MAX NORMALIZATION [0, 1] (Standard for many CNNs)
+        const min = Math.min(...Array.from(upsampled));
+        const max = Math.max(...Array.from(upsampled));
+        const range = (max - min) || 1.0;
+        const normalized = Array.from(upsampled).map(v => (v - min) / range);
         
         chunks.push(normalized);
       }
