@@ -55,8 +55,9 @@ export function LiveECGPage() {
   const workerRef = useRef<Worker | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const selectedPatientRef = useRef<Patient | null>(null);
-  const lastSeenValueRef = useRef<number>(-1);
-  const hasSeenFirstUpdateRef = useRef<boolean>(false);
+  const maxSeenTRef = useRef<number>(-1);
+  const slotValuesRef = useRef<Record<string, number>>({});
+  const initialDataCapturedRef = useRef<boolean>(false);
 
   // Keep IDs in Refs to avoid stale closures in Web Worker listener
   useEffect(() => {
@@ -185,26 +186,34 @@ export function LiveECGPage() {
       ref(database, '/live/ecg/slot3/t'),
     ];
 
-    const unsubscribes = slotRefs.map((slotRef) =>
+    const unsubscribes = slotRefs.map((slotRef, index) =>
       onValue(slotRef, (snapshot) => {
         if (snapshot.exists()) {
-          const newValue = snapshot.val();
+          const slotId = `slot${index + 1}`;
+          const currentT = snapshot.val();
           
-          // Only mark as Online if the hardware counter 't' has actually increased
-          // This prevents stale/cached Firebase data from showing as "Online" on load
-          if (!hasSeenFirstUpdateRef.current) {
-             lastSeenValueRef.current = newValue;
-             hasSeenFirstUpdateRef.current = true;
-          } else if (newValue > lastSeenValueRef.current) {
-             lastUpdateRef.current = Date.now();
-             lastSeenValueRef.current = newValue;
-             setIsConnected(true);
+          // Debug logs for heartbeat
+          // console.log(`[Firebase] ${slotId} pulse: ${currentT}`);
+
+          if (!initialDataCapturedRef.current) {
+             slotValuesRef.current[slotId] = currentT;
+             // Check if all slots have initial values
+             if (Object.keys(slotValuesRef.current).length === 3) {
+                initialDataCapturedRef.current = true;
+             }
+          } else {
+             // If any slot's counter has increased, the device is definitely online
+             if (currentT > (slotValuesRef.current[slotId] || 0)) {
+                setIsConnected(true);
+                lastUpdateRef.current = Date.now();
+                slotValuesRef.current[slotId] = currentT;
+             }
           }
         }
       })
     );
 
-    // Watchdog: If no updates seen for 5 seconds, mark offline
+    // Watchdog: 5 seconds timeout matches the 2s hardware cycle + buffer
     const watchdog = setInterval(() => {
       if (Date.now() - lastUpdateRef.current > 5000) {
         setIsConnected(false);
