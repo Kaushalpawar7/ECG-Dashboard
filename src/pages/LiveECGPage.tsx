@@ -59,6 +59,17 @@ export function LiveECGPage() {
   useEffect(() => {
     selectedPatientRef.current = selectedPatient;
   }, [selectedPatient]);
+
+  const isRecordingRef = useRef(false);
+  const dataModeRef = useRef<'simulation' | 'hardware'>('simulation');
+
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
+
+  useEffect(() => {
+    dataModeRef.current = dataMode;
+  }, [dataMode]);
   
   const generateRealisticECG = (time: number, seed: number, isHardwareValid: boolean) => {
     const baseline = 1850; // Reference point
@@ -126,36 +137,7 @@ export function LiveECGPage() {
     return () => worker.terminate();
   }, []);
 
-  useEffect(() => {
-    if (dataMode !== 'hardware' || !isRecording) return;
-    const slotDataRefs = [
-      ref(database, '/live/ecg/slot1/data'),
-      ref(database, '/live/ecg/slot2/data'),
-      ref(database, '/live/ecg/slot3/data'),
-    ];
-    const unsubs = slotDataRefs.map((dataRef) => 
-      onValue(dataRef, (snapshot) => {
-        if (snapshot.exists()) {
-           const newData = snapshot.val();
-           let points: number[] = [];
-           if (typeof newData === 'string') {
-              points = newData.split(',').map(v => parseInt(v.trim())).filter(v => !isNaN(v));
-           } else if (Array.isArray(newData)) {
-              points = newData.map(v => Number(v));
-           } else if (typeof newData === 'object') {
-              points = Object.values(newData).map(v => Number(v));
-           }
 
-           if (points.length > 0) {
-              hardwareBufferRef.current = [...hardwareBufferRef.current, ...points];
-              lastUpdateRef.current = Date.now();
-              setIsConnected(true);
-           }
-        }
-      })
-    );
-    return () => unsubs.forEach(unsub => unsub());
-  }, [dataMode, isRecording]);
 
    useEffect(() => {
     if (!isRecording) return;
@@ -215,31 +197,52 @@ export function LiveECGPage() {
 
   useEffect(() => {
     if (!database) return;
-    const statusRef = ref(database, '/live/status');
-    const unsubStatus = onValue(statusRef, (snap) => setLeadsConnected(snap.val() === "ON"));
-    const slotRefs = [
-      ref(database, '/live/ecg/slot1/t'),
-      ref(database, '/live/ecg/slot2/t'),
-      ref(database, '/live/ecg/slot3/t'),
-    ];
-    const unsubs = slotRefs.map((r, i) => onValue(r, (snap) => {
-      if (snap.exists()) {
-        const id = `slot${i+1}`;
-        const t = snap.val();
-        if (!initialDataCapturedRef.current) {
-          slotValuesRef.current[id] = t;
-          if (Object.keys(slotValuesRef.current).length >= 2) initialDataCapturedRef.current = true;
-        } else if (t > (slotValuesRef.current[id] || 0)) {
+    
+    const ecgRef = ref(database, '/live/ecg');
+    let lastTimestamp = 0;
+
+    const unsub = onValue(ecgRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        const t = val.t || 0;
+        const points = val.data;
+
+        if (t > lastTimestamp) {
           setIsConnected(true);
           lastUpdateRef.current = Date.now();
-          slotValuesRef.current[id] = t;
+          lastTimestamp = t;
+
+          let numericPoints: number[] = [];
+          if (Array.isArray(points)) {
+            numericPoints = points.map(v => Number(v));
+          } else if (points && typeof points === 'object') {
+            numericPoints = Object.values(points).map(v => Number(v));
+          }
+
+          if (numericPoints.length > 0) {
+            // Detect lead disconnect if values are all zeros
+            const allZeros = numericPoints.every(v => v === 0 || v < 10);
+            setLeadsConnected(!allZeros);
+
+            // Push to buffer if we are currently recording and in hardware mode
+            if (isRecordingRef.current && dataModeRef.current === 'hardware') {
+              hardwareBufferRef.current = [...hardwareBufferRef.current, ...numericPoints];
+            }
+          }
         }
       }
-    }));
+    });
+
     const wd = setInterval(() => {
-      if (Date.now() - lastUpdateRef.current > 10000) setIsConnected(false);
+      if (Date.now() - lastUpdateRef.current > 10000) {
+        setIsConnected(false);
+      }
     }, 2000);
-    return () => { unsubStatus(); unsubs.forEach(u => u()); clearInterval(wd); };
+
+    return () => {
+      unsub();
+      clearInterval(wd);
+    };
   }, []);
 
   const loadPatients = async () => {
