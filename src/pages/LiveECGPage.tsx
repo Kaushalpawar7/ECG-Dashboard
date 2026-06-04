@@ -199,7 +199,7 @@ export function LiveECGPage() {
     if (!database) return;
     
     const ecgRef = ref(database, '/live/ecg');
-    let lastTimestamp = 0;
+    let lastTimestamp = -1;
 
     const unsub = onValue(ecgRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -207,7 +207,13 @@ export function LiveECGPage() {
         const t = val.t || 0;
         const points = val.data;
 
-        if (t > lastTimestamp) {
+        if (lastTimestamp === -1) {
+          // Initialize with the stale/current database state on load
+          lastTimestamp = t;
+          return;
+        }
+
+        if (t !== lastTimestamp) {
           setIsConnected(true);
           lastUpdateRef.current = Date.now();
           lastTimestamp = t;
